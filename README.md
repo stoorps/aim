@@ -39,7 +39,7 @@ By default `aim` auto-detects whether to use user or system scope. Override that
 
 ## Current Flow Shape
 
-- `aim <QUERY>` registers unambiguous apps into the registry and renders review prompts when tracking needs confirmation
+- `aim <QUERY>` installs unambiguous apps, persists them into the registry after successful install, and renders review prompts when tracking needs confirmation
 - bare `aim` and `aim update` build a review-first update plan
 - `aim list` renders registered applications
 - `aim remove <QUERY>` resolves a registered application name before removal

@@ -1,16 +1,25 @@
+use std::env;
+use std::path::{Path, PathBuf};
+
 use crate::adapters::traits::AdapterResolution;
 use crate::app::identity::{IdentityFallback, ResolveIdentityError, resolve_identity};
 use crate::app::interaction::{InteractionKind, InteractionRequest};
 use crate::app::query::{ResolveQueryError, resolve_query};
-use crate::domain::app::AppRecord;
+use crate::app::scope::{ScopeOverride, resolve_install_scope_with_default};
+use crate::domain::app::{AppRecord, InstallScope};
 use crate::domain::source::{NormalizedSourceKind, ResolvedRelease, SourceKind};
 use crate::domain::update::{ArtifactCandidate, ParsedMetadata, UpdateChannelKind, UpdateStrategy};
+use crate::integration::install::{InstallOutcome, InstallRequest, execute_install};
+use crate::integration::policy::{IntegrationMode, resolve_install_policy};
 use crate::metadata::parse_document;
+use crate::platform::probe_live_host;
 use crate::source::github::{
     GitHubDiscoveryError, GitHubTransport, discover_github_candidates_with,
 };
 use crate::update::channels::build_channels;
 use crate::update::ranking::{rank_channels, select_artifact, to_preference};
+
+const FIXTURE_MODE_ENV: &str = "AIM_GITHUB_FIXTURE_MODE";
 
 pub fn build_add_plan(query: &str) -> Result<AddPlan, BuildAddPlanError> {
     let transport = crate::source::github::default_transport();
@@ -171,6 +180,82 @@ pub fn materialize_app_record(
     })
 }
 
+pub fn install_app(
+    source_input: &str,
+    plan: &AddPlan,
+    install_home: &Path,
+    requested_scope: InstallScope,
+) -> Result<InstalledApp, InstallAppError> {
+    let record =
+        materialize_app_record(source_input, plan).map_err(InstallAppError::Materialize)?;
+    let (family, capabilities) =
+        probe_live_host(install_home, requested_scope).map_err(InstallAppError::HostProbe)?;
+    let policy = resolve_install_policy(family, requested_scope, &capabilities)
+        .map_err(InstallAppError::Policy)?;
+    let payload_path = resolve_target_path(
+        install_home,
+        &policy
+            .payload_root
+            .join(format!("{}.AppImage", record.stable_id)),
+    );
+    let desktop_path = resolve_target_path(
+        install_home,
+        &policy
+            .desktop_entry_root
+            .join(format!("aim-{}.desktop", record.stable_id)),
+    );
+    let icon_path = resolve_target_path(
+        install_home,
+        &policy.icon_root.join(format!("{}.png", record.stable_id)),
+    );
+    let artifact_bytes = download_artifact_bytes(&plan.selected_artifact.url)?;
+    let payload_exec = payload_path.clone();
+    let desktop_owned = match policy.integration_mode {
+        IntegrationMode::PayloadOnly | IntegrationMode::Denied => None,
+        IntegrationMode::Full | IntegrationMode::Degraded => Some((
+            desktop_path.clone(),
+            render_desktop_entry(&record.display_name, &payload_exec),
+        )),
+    };
+
+    let install_outcome = execute_install(&InstallRequest {
+        staging_root: &install_home.join(".local/share/aim/staging"),
+        final_payload_path: &payload_path,
+        artifact_bytes: &artifact_bytes,
+        desktop: desktop_owned.as_ref().map(|(path, contents)| {
+            crate::integration::install::DesktopIntegrationRequest {
+                desktop_entry_path: path.as_path(),
+                desktop_entry_contents: contents.as_str(),
+                icon_path: Some(icon_path.as_path()),
+                icon_bytes: None,
+            }
+        }),
+        helpers: capabilities.helpers.clone(),
+    })
+    .map_err(InstallAppError::Install)?;
+
+    Ok(InstalledApp {
+        record,
+        selected_artifact: plan.selected_artifact.clone(),
+        source: plan.resolution.source.clone(),
+        install_scope: policy.scope,
+        integration_mode: policy.integration_mode,
+        install_outcome,
+        warnings: policy.warnings,
+    })
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct InstalledApp {
+    pub record: AppRecord,
+    pub selected_artifact: ArtifactCandidate,
+    pub source: crate::domain::source::SourceRef,
+    pub install_scope: InstallScope,
+    pub integration_mode: IntegrationMode,
+    pub install_outcome: InstallOutcome,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug)]
 pub enum BuildAddPlanError {
     Query(ResolveQueryError),
@@ -181,4 +266,53 @@ pub enum BuildAddPlanError {
 #[derive(Debug, Eq, PartialEq)]
 pub enum MaterializeAddRecordError {
     Identity(ResolveIdentityError),
+}
+
+#[derive(Debug)]
+pub enum InstallAppError {
+    Materialize(MaterializeAddRecordError),
+    Policy(String),
+    Download(reqwest::Error),
+    HostProbe(std::io::Error),
+    Install(crate::integration::install::PayloadInstallError),
+}
+
+fn download_artifact_bytes(url: &str) -> Result<Vec<u8>, InstallAppError> {
+    if env::var(FIXTURE_MODE_ENV).ok().as_deref() == Some("1") {
+        return Ok(b"\x7fELFAppImage".to_vec());
+    }
+
+    let response = reqwest::blocking::get(url).map_err(InstallAppError::Download)?;
+    let response = response
+        .error_for_status()
+        .map_err(InstallAppError::Download)?;
+    let bytes = response.bytes().map_err(InstallAppError::Download)?;
+    Ok(bytes.to_vec())
+}
+
+fn render_desktop_entry(display_name: &str, exec_path: &Path) -> String {
+    format!(
+        "[Desktop Entry]\nName={display_name}\nExec={}\nType=Application\nCategories=Utility;\n",
+        exec_path.display()
+    )
+}
+
+fn resolve_target_path(install_home: &Path, target: &Path) -> PathBuf {
+    if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        install_home.join(target)
+    }
+}
+
+pub fn resolve_requested_scope(system: bool, user: bool, is_effective_root: bool) -> InstallScope {
+    let override_scope = if system {
+        Some(ScopeOverride::System)
+    } else if user {
+        Some(ScopeOverride::User)
+    } else {
+        None
+    };
+
+    resolve_install_scope_with_default(is_effective_root, override_scope)
 }

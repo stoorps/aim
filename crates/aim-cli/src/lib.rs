@@ -2,15 +2,16 @@ pub mod cli;
 pub mod ui;
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use aim_core::app::add::{AddPlan, build_add_plan, materialize_app_record};
+use aim_core::app::add::{
+    AddPlan, InstalledApp, build_add_plan, install_app, resolve_requested_scope,
+};
 use aim_core::app::list::{ListRow, build_list_rows};
 use aim_core::app::remove::remove_registered_app;
 use aim_core::app::update::build_update_plan;
 use aim_core::domain::app::AppRecord;
-use aim_core::domain::source::SourceRef;
-use aim_core::domain::update::{ArtifactCandidate, UpdatePlan};
+use aim_core::domain::update::UpdatePlan;
 use aim_core::registry::model::Registry;
 use aim_core::registry::store::RegistryStore;
 
@@ -22,6 +23,7 @@ pub fn parse() -> Cli {
 
 pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
     let registry_path = registry_path();
+    let install_home = install_home(&registry_path);
     let store = RegistryStore::new(registry_path);
     let registry = store.load()?;
     let apps = registry.apps.clone();
@@ -46,29 +48,26 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
     }
 
     if let Some(query) = cli.query {
+        let requested_scope = resolve_requested_scope(cli.system, cli.user, is_effective_root());
         let mut plan = build_add_plan(&query)?;
         if !plan.interactions.is_empty() {
             match ui::prompt::resolve_add_plan_interactions(plan.clone())? {
                 Some(resolved) => {
                     plan = resolved;
                 }
-                None => return Ok(DispatchResult::PendingAdd(plan)),
+                None => return Ok(DispatchResult::PendingAdd(Box::new(plan))),
             }
         }
 
-        let record = materialize_app_record(&query, &plan)?;
+        let installed = install_app(&query, &plan, &install_home, requested_scope)?;
         let mut updated_apps = registry.apps.clone();
-        upsert_app_record(&mut updated_apps, record.clone());
+        upsert_app_record(&mut updated_apps, installed.record.clone());
         store.save(&Registry {
             version: registry.version,
             apps: updated_apps,
         })?;
 
-        return Ok(DispatchResult::Added(AddedApp {
-            record,
-            selected_artifact: plan.selected_artifact,
-            source: plan.resolution.source,
-        }));
+        return Ok(DispatchResult::Added(Box::new(installed)));
     }
 
     Ok(DispatchResult::Noop)
@@ -89,25 +88,18 @@ fn registry_path() -> PathBuf {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum DispatchResult {
-    Added(AddedApp),
+    Added(Box<InstalledApp>),
     List(Vec<ListRow>),
-    PendingAdd(AddPlan),
+    PendingAdd(Box<AddPlan>),
     Removed(String),
     UpdatePlan(UpdatePlan),
     Noop,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct AddedApp {
-    pub record: AppRecord,
-    pub selected_artifact: ArtifactCandidate,
-    pub source: SourceRef,
-}
-
 #[derive(Debug)]
 pub enum DispatchError {
     AddPlan(aim_core::app::add::BuildAddPlanError),
-    AddRecord(aim_core::app::add::MaterializeAddRecordError),
+    AddInstall(aim_core::app::add::InstallAppError),
     Prompt(ui::prompt::PromptError),
     RemovePlan(aim_core::app::remove::ResolveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
@@ -120,9 +112,9 @@ impl From<aim_core::app::add::BuildAddPlanError> for DispatchError {
     }
 }
 
-impl From<aim_core::app::add::MaterializeAddRecordError> for DispatchError {
-    fn from(value: aim_core::app::add::MaterializeAddRecordError) -> Self {
-        Self::AddRecord(value)
+impl From<aim_core::app::add::InstallAppError> for DispatchError {
+    fn from(value: aim_core::app::add::InstallAppError) -> Self {
+        Self::AddInstall(value)
     }
 }
 
@@ -160,4 +152,33 @@ fn upsert_app_record(apps: &mut Vec<AppRecord>, record: AppRecord) {
     }
 
     apps.push(record);
+}
+
+fn install_home(registry_path: &Path) -> PathBuf {
+    if env::var_os("AIM_REGISTRY_PATH").is_some() {
+        return registry_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("install-home");
+    }
+
+    let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
+    PathBuf::from(home)
+}
+
+fn is_effective_root() -> bool {
+    if let Some(value) = env::var_os("AIM_EFFECTIVE_ROOT") {
+        let value = value.to_string_lossy();
+        return value == "1" || value.eq_ignore_ascii_case("true");
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        libc::geteuid() == 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }

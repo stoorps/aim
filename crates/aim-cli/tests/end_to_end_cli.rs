@@ -66,7 +66,8 @@ fn query_command_registers_unambiguous_app_in_registry_file() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("tracked app: bat (sharkdp-bat)"));
+        .stdout(contains("installing as user"))
+        .stdout(contains("installed app: bat (sharkdp-bat)"));
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"sharkdp-bat\""));
@@ -103,9 +104,44 @@ fn old_release_query_can_track_latest_and_register_app() {
         .env("AIM_TRACKING_PREFERENCE", "latest")
         .assert()
         .success()
-        .stdout(contains("tracked app: t3code (pingdotgg-t3code)"));
+        .stdout(contains("installing as user"))
+        .stdout(contains("installed app: t3code (pingdotgg-t3code)"));
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"pingdotgg-t3code\""));
     assert!(contents.contains("locator = \"pingdotgg/t3code\""));
+}
+
+#[test]
+fn cli_add_installs_and_renders_resolved_mode() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("sharkdp/bat")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("installing as user"))
+        .stdout(contains("installed app:"));
+}
+
+#[test]
+fn system_request_on_immutable_host_falls_back_to_user_install() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let os_release_path = dir.path().join("os-release");
+    std::fs::write(&os_release_path, "ID=fedora\nVARIANT_ID=silverblue\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.args(["--system", "sharkdp/bat"])
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env("AIM_OS_RELEASE_PATH", &os_release_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("installing as user"))
+        .stdout(contains("downgraded to user scope"));
 }
