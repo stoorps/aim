@@ -56,6 +56,40 @@ fn remove_command_removes_registered_app_from_registry_file() {
 }
 
 #[test]
+fn remove_command_uninstalls_managed_files() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let install_home = dir.path().join("install-home");
+    let payload_path = install_home.join(".local/lib/aim/appimages/sharkdp-bat.AppImage");
+    let desktop_path = install_home.join(".local/share/applications/aim-sharkdp-bat.desktop");
+    let icon_path = install_home.join(".local/share/icons/hicolor/256x256/apps/sharkdp-bat.png");
+
+    let mut add_cmd = Command::cargo_bin("aim").unwrap();
+    add_cmd
+        .arg("sharkdp/bat")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success();
+
+    assert!(payload_path.exists());
+    assert!(desktop_path.exists());
+    assert!(icon_path.exists());
+
+    let mut remove_cmd = Command::cargo_bin("aim").unwrap();
+    remove_cmd
+        .args(["remove", "sharkdp-bat"])
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .success()
+        .stdout(contains("removed: bat"));
+
+    assert!(!payload_path.exists());
+    assert!(!desktop_path.exists());
+    assert!(!icon_path.exists());
+}
+
+#[test]
 fn query_command_registers_unambiguous_app_in_registry_file() {
     let dir = tempdir().unwrap();
     let registry_path = dir.path().join("registry.toml");

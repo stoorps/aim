@@ -6,7 +6,7 @@ use crate::app::identity::{IdentityFallback, ResolveIdentityError, resolve_ident
 use crate::app::interaction::{InteractionKind, InteractionRequest};
 use crate::app::query::{ResolveQueryError, resolve_query};
 use crate::app::scope::{ScopeOverride, resolve_install_scope_with_default};
-use crate::domain::app::{AppRecord, InstallScope};
+use crate::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use crate::domain::source::{NormalizedSourceKind, ResolvedRelease, SourceKind};
 use crate::domain::update::{ArtifactCandidate, ParsedMetadata, UpdateChannelKind, UpdateStrategy};
 use crate::integration::install::{InstallOutcome, InstallRequest, execute_install};
@@ -177,6 +177,7 @@ pub fn materialize_app_record(
         installed_version: Some(plan.selected_artifact.version.clone()),
         update_strategy: Some(plan.update_strategy.clone()),
         metadata: plan.metadata.clone(),
+        install: None,
     })
 }
 
@@ -186,7 +187,7 @@ pub fn install_app(
     install_home: &Path,
     requested_scope: InstallScope,
 ) -> Result<InstalledApp, InstallAppError> {
-    let record =
+    let mut record =
         materialize_app_record(source_input, plan).map_err(InstallAppError::Materialize)?;
     let (family, capabilities) =
         probe_live_host(install_home, requested_scope).map_err(InstallAppError::HostProbe)?;
@@ -234,6 +235,19 @@ pub fn install_app(
     })
     .map_err(InstallAppError::Install)?;
 
+    record.install = Some(InstallMetadata {
+        scope: policy.scope,
+        payload_path: Some(install_outcome.final_payload_path.display().to_string()),
+        desktop_entry_path: install_outcome
+            .desktop_entry_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        icon_path: install_outcome
+            .icon_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+    });
+
     Ok(InstalledApp {
         record,
         selected_artifact: plan.selected_artifact.clone(),
@@ -279,7 +293,7 @@ pub enum InstallAppError {
 
 fn download_artifact_bytes(url: &str) -> Result<Vec<u8>, InstallAppError> {
     if env::var(FIXTURE_MODE_ENV).ok().as_deref() == Some("1") {
-        return Ok(b"\x7fELFAppImage".to_vec());
+        return Ok(b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82".to_vec());
     }
 
     let response = reqwest::blocking::get(url).map_err(InstallAppError::Download)?;

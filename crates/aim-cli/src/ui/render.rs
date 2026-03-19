@@ -11,7 +11,7 @@ pub fn render_dispatch_result(result: &DispatchResult) -> String {
         DispatchResult::Added(added) => render_added_app(added),
         DispatchResult::List(rows) => render_list(rows),
         DispatchResult::PendingAdd(plan) => render_pending_add(plan),
-        DispatchResult::Removed(display_name) => format!("removed: {display_name}"),
+        DispatchResult::Removed(removed) => render_removed_app(removed),
         DispatchResult::UpdatePlan(plan) => {
             render_update_summary(plan.items.len(), plan.items.len(), 0)
         }
@@ -71,4 +71,20 @@ fn render_list(rows: &[aim_core::app::list::ListRow]) -> String {
         output.push_str(&format!("- {} ({})\n", row.display_name, row.stable_id));
     }
     output.trim_end().to_owned()
+}
+
+fn render_removed_app(removed: &aim_core::app::remove::RemovalResult) -> String {
+    let warning_lines = removed
+        .warnings
+        .iter()
+        .map(|warning| format!("warning: {warning}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let summary = format!("removed: {}", removed.removed.display_name);
+
+    if warning_lines.is_empty() {
+        summary
+    } else {
+        format!("{summary}\n{warning_lines}")
+    }
 }

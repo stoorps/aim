@@ -8,7 +8,7 @@ use aim_core::app::add::{
     AddPlan, InstalledApp, build_add_plan, install_app, resolve_requested_scope,
 };
 use aim_core::app::list::{ListRow, build_list_rows};
-use aim_core::app::remove::remove_registered_app;
+use aim_core::app::remove::{RemovalResult, remove_registered_app};
 use aim_core::app::update::build_update_plan;
 use aim_core::domain::app::AppRecord;
 use aim_core::domain::update::UpdatePlan;
@@ -36,12 +36,13 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
         return match command {
             cli::args::Command::List => Ok(DispatchResult::List(build_list_rows(&apps))),
             cli::args::Command::Remove { query } => {
-                let removal = remove_registered_app(&query, &apps)?;
+                let removal = remove_registered_app(&query, &apps, &install_home)?;
+                let remaining_apps = removal.remaining_apps.clone();
                 store.save(&Registry {
                     version: registry.version,
-                    apps: removal.remaining_apps,
+                    apps: remaining_apps,
                 })?;
-                Ok(DispatchResult::Removed(removal.removed.display_name))
+                Ok(DispatchResult::Removed(Box::new(removal)))
             }
             cli::args::Command::Update => Ok(DispatchResult::UpdatePlan(build_update_plan(&apps)?)),
         };
@@ -91,7 +92,7 @@ pub enum DispatchResult {
     Added(Box<InstalledApp>),
     List(Vec<ListRow>),
     PendingAdd(Box<AddPlan>),
-    Removed(String),
+    Removed(Box<RemovalResult>),
     UpdatePlan(UpdatePlan),
     Noop,
 }
@@ -101,7 +102,7 @@ pub enum DispatchError {
     AddPlan(aim_core::app::add::BuildAddPlanError),
     AddInstall(aim_core::app::add::InstallAppError),
     Prompt(ui::prompt::PromptError),
-    RemovePlan(aim_core::app::remove::ResolveRegisteredAppError),
+    RemovePlan(aim_core::app::remove::RemoveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
     UpdatePlan(aim_core::app::update::BuildUpdatePlanError),
 }
@@ -130,8 +131,8 @@ impl From<aim_core::app::update::BuildUpdatePlanError> for DispatchError {
     }
 }
 
-impl From<aim_core::app::remove::ResolveRegisteredAppError> for DispatchError {
-    fn from(value: aim_core::app::remove::ResolveRegisteredAppError) -> Self {
+impl From<aim_core::app::remove::RemoveRegisteredAppError> for DispatchError {
+    fn from(value: aim_core::app::remove::RemoveRegisteredAppError) -> Self {
         Self::RemovePlan(value)
     }
 }

@@ -19,6 +19,7 @@ fn installed_apps_are_carried_into_review_plan() {
         installed_version: None,
         update_strategy: None,
         metadata: Vec::new(),
+        install: None,
     }];
 
     let plan = build_update_plan(&apps).unwrap();
@@ -49,6 +50,7 @@ fn update_plan_uses_alternate_channel_after_preferred_failure() {
             }],
         }),
         metadata: Vec::new(),
+        install: None,
     }];
 
     let plan = build_update_plan(&apps).unwrap();

@@ -1,7 +1,7 @@
 use crate::domain::source::SourceRef;
 use crate::domain::update::{ParsedMetadata, UpdateStrategy};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum InstallScope {
     User,
     System,
@@ -22,6 +22,17 @@ pub struct AppIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct InstallMetadata {
+    pub scope: InstallScope,
+    #[serde(default)]
+    pub payload_path: Option<String>,
+    #[serde(default)]
+    pub desktop_entry_path: Option<String>,
+    #[serde(default)]
+    pub icon_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct AppRecord {
     pub stable_id: String,
     pub display_name: String,
@@ -35,4 +46,6 @@ pub struct AppRecord {
     pub update_strategy: Option<UpdateStrategy>,
     #[serde(default)]
     pub metadata: Vec<ParsedMetadata>,
+    #[serde(default)]
+    pub install: Option<InstallMetadata>,
 }
