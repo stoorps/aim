@@ -16,7 +16,7 @@ impl AdapterCapabilities {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdapterResolution {
     pub source: SourceRef,
     pub release: ResolvedRelease,

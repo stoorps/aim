@@ -1,4 +1,4 @@
-use crate::app::interaction::InteractionRequest;
+use crate::app::interaction::{InteractionKind, InteractionRequest};
 use crate::domain::app::AppRecord;
 
 pub fn resolve_registered_app<'a>(
@@ -20,12 +20,15 @@ pub fn resolve_registered_app<'a>(
         }),
         [app] => Ok(*app),
         _ => Err(ResolveRegisteredAppError::Ambiguous {
-            request: InteractionRequest::SelectRegisteredApp {
-                query: query.to_owned(),
-                matches: matches
-                    .iter()
-                    .map(|app| format!("{} ({})", app.display_name, app.stable_id))
-                    .collect(),
+            request: InteractionRequest {
+                key: "select-registered-app".to_owned(),
+                kind: InteractionKind::SelectRegisteredApp {
+                    query: query.to_owned(),
+                    matches: matches
+                        .iter()
+                        .map(|app| format!("{} ({})", app.display_name, app.stable_id))
+                        .collect(),
+                },
             },
         }),
     }

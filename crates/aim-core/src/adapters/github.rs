@@ -1,4 +1,5 @@
 use crate::adapters::traits::{AdapterCapabilities, AdapterResolution, SourceAdapter};
+use crate::app::query::resolve_query;
 use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 
 pub struct GitHubAdapter;
@@ -20,14 +21,16 @@ impl GitHubAdapter {
         }
 
         Ok(AdapterResolution {
-            source: SourceRef {
-                kind: SourceKind::GitHub,
-                locator: source.locator.clone(),
-            },
+            source: source.clone(),
             release: ResolvedRelease {
                 version: "latest".to_owned(),
+                prerelease: false,
             },
         })
+    }
+
+    pub fn normalize(&self, query: &str) -> Result<SourceRef, GitHubAdapterError> {
+        resolve_query(query).map_err(|_| GitHubAdapterError::UnsupportedSource)
     }
 }
 

@@ -10,12 +10,10 @@ impl GitLabAdapter {
         }
 
         Ok(AdapterResolution {
-            source: SourceRef {
-                kind: SourceKind::GitLab,
-                locator: source.locator.clone(),
-            },
+            source: source.clone(),
             release: ResolvedRelease {
                 version: "latest".to_owned(),
+                prerelease: false,
             },
         })
     }

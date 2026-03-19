@@ -1,4 +1,5 @@
 use crate::domain::app::{AppIdentity, IdentityConfidence};
+use crate::source::input::classify_input;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdentityFallback {
@@ -31,6 +32,18 @@ pub fn resolve_identity(
             stable_id: normalize_identifier(explicit_name),
             display_name: explicit_name.to_owned(),
             confidence: IdentityConfidence::NeedsConfirmation,
+        });
+    }
+
+    if let Some(source_url) = source_url.filter(|value| !value.trim().is_empty())
+        && let Ok(classified) = classify_input(source_url)
+        && let Some(repo) = classified.canonical_locator
+    {
+        let display_name = repo.split('/').next_back().unwrap_or(&repo).to_owned();
+        return Ok(AppIdentity {
+            stable_id: normalize_identifier(&repo),
+            display_name,
+            confidence: IdentityConfidence::Confident,
         });
     }
 

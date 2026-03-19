@@ -4,12 +4,13 @@ pub mod ui;
 use std::env;
 use std::path::PathBuf;
 
-use aim_core::app::add::build_add_plan;
+use aim_core::app::add::{AddPlan, build_add_plan, materialize_app_record};
 use aim_core::app::list::{ListRow, build_list_rows};
 use aim_core::app::remove::remove_registered_app;
 use aim_core::app::update::build_update_plan;
+use aim_core::domain::app::AppRecord;
 use aim_core::domain::source::SourceRef;
-use aim_core::domain::update::UpdatePlan;
+use aim_core::domain::update::{ArtifactCandidate, UpdatePlan};
 use aim_core::registry::model::Registry;
 use aim_core::registry::store::RegistryStore;
 
@@ -45,9 +46,29 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
     }
 
     if let Some(query) = cli.query {
-        return Ok(DispatchResult::AddPlan(
-            build_add_plan(&query)?.resolution.source,
-        ));
+        let mut plan = build_add_plan(&query)?;
+        if !plan.interactions.is_empty() {
+            match ui::prompt::resolve_add_plan_interactions(plan.clone())? {
+                Some(resolved) => {
+                    plan = resolved;
+                }
+                None => return Ok(DispatchResult::PendingAdd(plan)),
+            }
+        }
+
+        let record = materialize_app_record(&query, &plan)?;
+        let mut updated_apps = registry.apps.clone();
+        upsert_app_record(&mut updated_apps, record.clone());
+        store.save(&Registry {
+            version: registry.version,
+            apps: updated_apps,
+        })?;
+
+        return Ok(DispatchResult::Added(AddedApp {
+            record,
+            selected_artifact: plan.selected_artifact,
+            source: plan.resolution.source,
+        }));
     }
 
     Ok(DispatchResult::Noop)
@@ -68,16 +89,26 @@ fn registry_path() -> PathBuf {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum DispatchResult {
-    AddPlan(SourceRef),
+    Added(AddedApp),
     List(Vec<ListRow>),
+    PendingAdd(AddPlan),
     Removed(String),
     UpdatePlan(UpdatePlan),
     Noop,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct AddedApp {
+    pub record: AppRecord,
+    pub selected_artifact: ArtifactCandidate,
+    pub source: SourceRef,
+}
+
 #[derive(Debug)]
 pub enum DispatchError {
     AddPlan(aim_core::app::add::BuildAddPlanError),
+    AddRecord(aim_core::app::add::MaterializeAddRecordError),
+    Prompt(ui::prompt::PromptError),
     RemovePlan(aim_core::app::remove::ResolveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
     UpdatePlan(aim_core::app::update::BuildUpdatePlanError),
@@ -86,6 +117,18 @@ pub enum DispatchError {
 impl From<aim_core::app::add::BuildAddPlanError> for DispatchError {
     fn from(value: aim_core::app::add::BuildAddPlanError) -> Self {
         Self::AddPlan(value)
+    }
+}
+
+impl From<aim_core::app::add::MaterializeAddRecordError> for DispatchError {
+    fn from(value: aim_core::app::add::MaterializeAddRecordError) -> Self {
+        Self::AddRecord(value)
+    }
+}
+
+impl From<ui::prompt::PromptError> for DispatchError {
+    fn from(value: ui::prompt::PromptError) -> Self {
+        Self::Prompt(value)
     }
 }
 
@@ -105,4 +148,16 @@ impl From<aim_core::registry::store::RegistryStoreError> for DispatchError {
     fn from(value: aim_core::registry::store::RegistryStoreError) -> Self {
         Self::Registry(value)
     }
+}
+
+fn upsert_app_record(apps: &mut Vec<AppRecord>, record: AppRecord) {
+    if let Some(existing) = apps
+        .iter_mut()
+        .find(|item| item.stable_id == record.stable_id)
+    {
+        *existing = record;
+        return;
+    }
+
+    apps.push(record);
 }

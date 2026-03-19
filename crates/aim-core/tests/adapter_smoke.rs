@@ -4,6 +4,7 @@ use aim_core::adapters::all_adapter_kinds;
 fn all_expected_adapter_kinds_are_registered() {
     let kinds = all_adapter_kinds();
 
+    assert!(kinds.contains(&"github"));
     assert!(kinds.contains(&"gitlab"));
     assert!(kinds.contains(&"direct-url"));
     assert!(kinds.contains(&"zsync"));

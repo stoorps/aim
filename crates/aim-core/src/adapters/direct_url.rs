@@ -10,12 +10,10 @@ impl DirectUrlAdapter {
         }
 
         Ok(AdapterResolution {
-            source: SourceRef {
-                kind: SourceKind::DirectUrl,
-                locator: source.locator.clone(),
-            },
+            source: source.clone(),
             release: ResolvedRelease {
                 version: "unresolved".to_owned(),
+                prerelease: false,
             },
         })
     }

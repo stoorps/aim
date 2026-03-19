@@ -23,6 +23,9 @@ aim remove <QUERY>
 ## Query Forms
 
 - `owner/repo` for GitHub shorthand
+- GitHub repository URLs
+- GitHub release URLs
+- direct GitHub release asset URLs
 - `https://...` direct URLs
 - GitLab URLs
 - `file://...` local file imports
@@ -36,7 +39,7 @@ By default `aim` auto-detects whether to use user or system scope. Override that
 
 ## Current Flow Shape
 
-- `aim <QUERY>` resolves the query into a normalized source plan
+- `aim <QUERY>` registers unambiguous apps into the registry and renders review prompts when tracking needs confirmation
 - bare `aim` and `aim update` build a review-first update plan
 - `aim list` renders registered applications
 - `aim remove <QUERY>` resolves a registered application name before removal
