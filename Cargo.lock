@@ -19,6 +19,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "dialoguer",
+ "libc",
  "predicates",
  "tempfile",
 ]
