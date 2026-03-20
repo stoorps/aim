@@ -5,11 +5,12 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use aim_core::app::add::{
-    AddPlan, InstalledApp, build_add_plan, install_app, resolve_requested_scope,
+    AddPlan, InstalledApp, build_add_plan, install_app_with_reporter, resolve_requested_scope,
 };
 use aim_core::app::list::{ListRow, build_list_rows};
-use aim_core::app::remove::{RemovalResult, remove_registered_app};
-use aim_core::app::update::{build_update_plan, execute_updates};
+use aim_core::app::progress::{NoopReporter, OperationEvent, OperationStage, ProgressReporter};
+use aim_core::app::remove::{RemovalResult, remove_registered_app_with_reporter};
+use aim_core::app::update::{build_update_plan, execute_updates_with_reporter};
 use aim_core::domain::app::AppRecord;
 use aim_core::domain::update::{UpdateExecutionResult, UpdatePlan};
 use aim_core::registry::model::Registry;
@@ -22,6 +23,14 @@ pub fn parse() -> Cli {
 }
 
 pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
+    let mut reporter = NoopReporter;
+    dispatch_with_reporter(cli, &mut reporter)
+}
+
+pub fn dispatch_with_reporter(
+    cli: Cli,
+    reporter: &mut impl ProgressReporter,
+) -> Result<DispatchResult, DispatchError> {
     let registry_path = registry_path();
     let install_home = install_home(&registry_path);
     let store = RegistryStore::new(registry_path);
@@ -36,21 +45,40 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
         return match command {
             cli::args::Command::List => Ok(DispatchResult::List(build_list_rows(&apps))),
             cli::args::Command::Remove { query } => {
-                let removal = remove_registered_app(&query, &apps, &install_home)?;
+                let removal =
+                    remove_registered_app_with_reporter(&query, &apps, &install_home, reporter)?;
                 let remaining_apps = removal.remaining_apps.clone();
+                reporter.report(&OperationEvent::StageChanged {
+                    stage: OperationStage::SaveRegistry,
+                    message: "saving registry".to_owned(),
+                });
                 store.save(&Registry {
                     version: registry.version,
                     apps: remaining_apps,
                 })?;
+                reporter.report(&OperationEvent::Finished {
+                    summary: format!("removed {}", removal.removed.stable_id),
+                });
                 Ok(DispatchResult::Removed(Box::new(removal)))
             }
             cli::args::Command::Update => {
-                let updates = execute_updates(&apps, &install_home)?;
+                let updates = execute_updates_with_reporter(&apps, &install_home, reporter)?;
                 let updated_apps = updates.apps.clone();
+                reporter.report(&OperationEvent::StageChanged {
+                    stage: OperationStage::SaveRegistry,
+                    message: "saving registry".to_owned(),
+                });
                 store.save(&Registry {
                     version: registry.version,
                     apps: updated_apps,
                 })?;
+                reporter.report(&OperationEvent::Finished {
+                    summary: format!(
+                        "updated {}, failed {}",
+                        updates.updated_count(),
+                        updates.failed_count()
+                    ),
+                });
                 Ok(DispatchResult::Updated(Box::new(updates)))
             }
         };
@@ -68,13 +96,21 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
             }
         }
 
-        let installed = install_app(&query, &plan, &install_home, requested_scope)?;
+        let installed =
+            install_app_with_reporter(&query, &plan, &install_home, requested_scope, reporter)?;
         let mut updated_apps = registry.apps.clone();
         upsert_app_record(&mut updated_apps, installed.record.clone());
+        reporter.report(&OperationEvent::StageChanged {
+            stage: OperationStage::SaveRegistry,
+            message: "saving registry".to_owned(),
+        });
         store.save(&Registry {
             version: registry.version,
             apps: updated_apps,
         })?;
+        reporter.report(&OperationEvent::Finished {
+            summary: format!("installed {}", installed.record.stable_id),
+        });
 
         return Ok(DispatchResult::Added(Box::new(installed)));
     }

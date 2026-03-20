@@ -3,6 +3,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::app::interaction::{InteractionKind, InteractionRequest};
+use crate::app::progress::{
+    NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
+};
 use crate::domain::app::{AppRecord, InstallScope};
 use crate::integration::paths::{desktop_entry_path, icon_path, managed_appimage_path};
 use crate::integration::refresh::refresh_integration;
@@ -66,8 +69,30 @@ pub fn remove_registered_app(
     apps: &[AppRecord],
     install_home: &Path,
 ) -> Result<RemovalResult, RemoveRegisteredAppError> {
+    let mut reporter = NoopReporter;
+    remove_registered_app_with_reporter(query, apps, install_home, &mut reporter)
+}
+
+pub fn remove_registered_app_with_reporter(
+    query: &str,
+    apps: &[AppRecord],
+    install_home: &Path,
+    reporter: &mut impl ProgressReporter,
+) -> Result<RemovalResult, RemoveRegisteredAppError> {
+    reporter.report(&OperationEvent::Started {
+        kind: OperationKind::Remove,
+        label: query.to_owned(),
+    });
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::ResolveQuery,
+        message: format!("resolving {query}"),
+    });
     let app = resolve_registered_app(query, apps).map_err(RemoveRegisteredAppError::Resolve)?;
     let plan = build_removal_plan(app, install_home);
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::StagePayload,
+        message: "removing managed artifacts".to_owned(),
+    });
     let warnings = delete_artifacts(&plan)?;
     let remaining_apps = apps
         .iter()
@@ -75,11 +100,21 @@ pub fn remove_registered_app(
         .cloned()
         .collect();
 
-    Ok(RemovalResult {
+    let result = RemovalResult {
         removed: plan,
         remaining_apps,
         warnings,
-    })
+    };
+
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::Finalize,
+        message: format!("removed {}", result.removed.stable_id),
+    });
+    reporter.report(&OperationEvent::Finished {
+        summary: format!("removed {}", result.removed.stable_id),
+    });
+
+    Ok(result)
 }
 
 #[derive(Debug, Eq, PartialEq)]

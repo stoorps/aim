@@ -10,12 +10,15 @@ const FIXTURE_MODE_ENV: &str = "AIM_GITHUB_FIXTURE_MODE";
 
 #[test]
 fn list_command_runs_without_registry_entries() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
     let mut cmd = Command::cargo_bin("aim").unwrap();
 
     cmd.arg("list")
+        .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("installed"));
+        .stdout(contains("No installed apps yet"));
 }
 
 #[test]
@@ -53,7 +56,8 @@ fn remove_command_removes_registered_app_from_registry_file() {
         .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("removed: Bat"));
+        .stdout(contains("Removal Summary"))
+        .stdout(contains("Removed app: Bat"));
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(!contents.contains("stable_id = \"bat\""));
@@ -86,7 +90,8 @@ fn remove_command_uninstalls_managed_files() {
         .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("removed: bat"));
+        .stdout(contains("Removal Summary"))
+        .stdout(contains("Removed app: bat"));
 
     assert!(!payload_path.exists());
     assert!(!desktop_path.exists());
@@ -104,8 +109,8 @@ fn query_command_registers_unambiguous_app_in_registry_file() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("installing as user"))
-        .stdout(contains("installed app: bat (sharkdp-bat)"));
+        .stdout(contains("Installation Summary"))
+        .stdout(contains("Application: bat (sharkdp-bat)"));
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"sharkdp-bat\""));
@@ -123,7 +128,7 @@ fn old_release_query_renders_tracking_prompt_without_writing_registry() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("tracking preference required"))
+        .stdout(contains("Choose update tracking"))
         .stdout(contains("v0.0.11"))
         .stdout(contains("v0.0.12"));
 
@@ -142,8 +147,9 @@ fn old_release_query_can_track_latest_and_register_app() {
         .env("AIM_TRACKING_PREFERENCE", "latest")
         .assert()
         .success()
-        .stdout(contains("installing as user"))
-        .stdout(contains("installed app: t3code (pingdotgg-t3code)"));
+        .stdout(contains("Installation Summary"))
+        .stdout(contains("Application: t3code (pingdotgg-t3code)"))
+        .stdout(contains("Install scope: user"));
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"pingdotgg-t3code\""));
@@ -161,8 +167,80 @@ fn cli_add_installs_and_renders_resolved_mode() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("installing as user"))
-        .stdout(contains("installed app:"));
+        .stdout(contains("Installation Summary"))
+        .stdout(contains("Selected artifact"));
+}
+
+#[test]
+fn cli_add_emits_live_progress_to_stderr() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("sharkdp/bat")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stderr(contains("Installing sharkdp/bat"))
+        .stderr(contains("Downloading artifact"))
+        .stderr(contains("Saving registry"));
+}
+
+#[test]
+fn bare_aim_review_renders_review_heading() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let store = RegistryStore::new(registry_path.clone());
+    store
+        .save(&Registry {
+            version: 1,
+            apps: vec![AppRecord {
+                stable_id: "pingdotgg-t3code".to_owned(),
+                display_name: "t3code".to_owned(),
+                source_input: Some("pingdotgg/t3code".to_owned()),
+                source: None,
+                installed_version: Some("0.0.11".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: Some(InstallMetadata {
+                    scope: InstallScope::User,
+                    payload_path: None,
+                    desktop_entry_path: None,
+                    icon_path: None,
+                }),
+            }],
+        })
+        .unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .success()
+        .stdout(contains("Update Review"))
+        .stdout(contains("apps with updates"));
+}
+
+#[test]
+fn remove_command_emits_live_progress_to_stderr() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    std::fs::write(
+        &registry_path,
+        "version = 1\n[[apps]]\nstable_id = \"bat\"\ndisplay_name = \"Bat\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.args(["remove", "bat"])
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .success()
+        .stderr(contains("Removing bat"))
+        .stderr(contains("Resolving source: resolving bat"))
+        .stderr(contains("Saving registry"));
 }
 
 #[test]
@@ -180,7 +258,8 @@ fn system_request_on_immutable_host_falls_back_to_user_install() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("installing as user"))
+        .stdout(contains("Installation Summary"))
+        .stdout(contains("Install scope: user"))
         .stdout(contains("downgraded to user scope"));
 }
 
@@ -228,4 +307,42 @@ fn update_command_applies_updates() {
     assert_eq!(updated.apps[0].stable_id, "pingdotgg-t3code");
     assert_eq!(updated.apps[0].installed_version.as_deref(), Some("0.0.12"));
     assert!(payload_path.exists());
+}
+
+#[test]
+fn update_command_emits_live_progress_to_stderr() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let store = RegistryStore::new(registry_path.clone());
+    store
+        .save(&Registry {
+            version: 1,
+            apps: vec![AppRecord {
+                stable_id: "pingdotgg-t3code".to_owned(),
+                display_name: "t3code".to_owned(),
+                source_input: Some("pingdotgg/t3code".to_owned()),
+                source: None,
+                installed_version: Some("0.0.11".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: Some(InstallMetadata {
+                    scope: InstallScope::User,
+                    payload_path: None,
+                    desktop_entry_path: None,
+                    icon_path: None,
+                }),
+            }],
+        })
+        .unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("update")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stderr(contains("Updating 1 apps"))
+        .stderr(contains("Resolving source: resolving pingdotgg-t3code"))
+        .stderr(contains("Saving registry"));
 }

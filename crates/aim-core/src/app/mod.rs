@@ -2,6 +2,7 @@ pub mod add;
 pub mod identity;
 pub mod interaction;
 pub mod list;
+pub mod progress;
 pub mod query;
 pub mod remove;
 pub mod scope;

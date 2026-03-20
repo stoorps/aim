@@ -1,4 +1,5 @@
-use aim_core::app::update::{build_update_plan, execute_updates};
+use aim_core::app::progress::{OperationEvent, OperationStage};
+use aim_core::app::update::{build_update_plan, execute_updates, execute_updates_with_reporter};
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use aim_core::domain::update::{ChannelPreference, UpdateChannelKind, UpdateStrategy};
 use tempfile::tempdir;
@@ -87,4 +88,53 @@ fn failed_update_keeps_previous_app_record() {
     assert_eq!(result.apps, vec![previous]);
     assert_eq!(result.updated_count(), 0);
     assert_eq!(result.failed_count(), 1);
+}
+
+#[test]
+fn update_execution_reports_per_app_lifecycle_events() {
+    let install_home = tempdir().unwrap();
+    let app = AppRecord {
+        stable_id: "legacy-bat".to_owned(),
+        display_name: "Legacy Bat".to_owned(),
+        source_input: None,
+        source: None,
+        installed_version: Some("0.9.0".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+    let mut events: Vec<OperationEvent> = Vec::new();
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let result = execute_updates_with_reporter(
+        std::slice::from_ref(&app),
+        install_home.path(),
+        &mut reporter,
+    )
+    .unwrap();
+
+    assert_eq!(result.failed_count(), 1);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::StageChanged {
+                stage: OperationStage::ResolveQuery,
+                ..
+            }
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::Failed {
+                stage: OperationStage::ResolveQuery,
+                ..
+            }
+        )
+    }));
 }

@@ -3,24 +3,24 @@ use std::io::IsTerminal;
 
 use aim_core::app::add::{AddPlan, prefer_latest_tracking};
 use aim_core::app::interaction::{InteractionKind, InteractionRequest};
-use dialoguer::{Select, theme::ColorfulTheme};
+use dialoguer::Select;
 
 const TRACKING_PREFERENCE_ENV: &str = "AIM_TRACKING_PREFERENCE";
 
 pub fn render_interaction(request: &InteractionRequest) -> String {
     match &request.kind {
         InteractionKind::SelectRegisteredApp { query, matches } => format!(
-            "multiple installed apps match '{query}': {}",
+            "Choose the installed app matching '{query}': {}",
             matches.join(", ")
         ),
         InteractionKind::ChooseTrackingPreference {
             requested_version,
             latest_version,
         } => format!(
-            "tracking preference required: requested {requested_version}, latest available {latest_version}",
+            "Choose update tracking: requested {requested_version}, latest available {latest_version}",
         ),
         InteractionKind::SelectArtifact { candidates } => {
-            format!("artifact selection required: {}", candidates.join(", "))
+            format!("Choose an artifact: {}", candidates.join(", "))
         }
     }
 }
@@ -100,8 +100,8 @@ fn resolve_tracking_preference(
         format!("Keep tracking the requested release lineage ({requested_version})"),
         format!("Track the latest release after install ({latest_version})"),
     ];
-    let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Choose update tracking behavior")
+    let selection = Select::with_theme(&crate::ui::theme::dialog_theme())
+        .with_prompt("Choose update tracking")
         .items(options)
         .default(1)
         .interact()?;

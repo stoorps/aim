@@ -1,8 +1,12 @@
 use aim_core::app::interaction::{InteractionKind, InteractionRequest};
 use aim_core::app::list::build_list_rows;
-use aim_core::app::remove::{build_removal_plan, resolve_registered_app};
+use aim_core::app::progress::{OperationEvent, OperationStage};
+use aim_core::app::remove::{
+    build_removal_plan, remove_registered_app_with_reporter, resolve_registered_app,
+};
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use std::path::Path;
+use tempfile::tempdir;
 
 #[test]
 fn remove_flow_rejects_unknown_app_names() {
@@ -124,4 +128,56 @@ fn removal_plan_falls_back_to_derived_managed_user_paths() {
             "/home/test/.local/share/icons/hicolor/256x256/apps/bat.png".to_owned(),
         ]
     );
+}
+
+#[test]
+fn remove_flow_reports_resolution_and_cleanup_events() {
+    let install_home = tempdir().unwrap();
+    let app = AppRecord {
+        stable_id: "bat".to_owned(),
+        display_name: "Bat".to_owned(),
+        source_input: None,
+        source: None,
+        installed_version: None,
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: Some(
+                install_home
+                    .path()
+                    .join(".local/lib/aim/appimages/bat.AppImage")
+                    .display()
+                    .to_string(),
+            ),
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+    let mut events: Vec<OperationEvent> = Vec::new();
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let result =
+        remove_registered_app_with_reporter("bat", &[app], install_home.path(), &mut reporter)
+            .unwrap();
+
+    assert_eq!(result.removed.stable_id, "bat");
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::StageChanged {
+                stage: OperationStage::ResolveQuery,
+                ..
+            }
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::StageChanged {
+                stage: OperationStage::Finalize,
+                ..
+            }
+        )
+    }));
 }

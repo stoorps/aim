@@ -1,9 +1,13 @@
 use std::env;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::traits::AdapterResolution;
 use crate::app::identity::{IdentityFallback, ResolveIdentityError, resolve_identity};
 use crate::app::interaction::{InteractionKind, InteractionRequest};
+use crate::app::progress::{
+    NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
+};
 use crate::app::query::{ResolveQueryError, resolve_query};
 use crate::app::scope::{ScopeOverride, resolve_install_scope_with_default};
 use crate::domain::app::{AppRecord, InstallMetadata, InstallScope};
@@ -187,6 +191,27 @@ pub fn install_app(
     install_home: &Path,
     requested_scope: InstallScope,
 ) -> Result<InstalledApp, InstallAppError> {
+    let mut reporter = NoopReporter;
+    install_app_with_reporter(
+        source_input,
+        plan,
+        install_home,
+        requested_scope,
+        &mut reporter,
+    )
+}
+
+pub fn install_app_with_reporter(
+    source_input: &str,
+    plan: &AddPlan,
+    install_home: &Path,
+    requested_scope: InstallScope,
+    reporter: &mut impl ProgressReporter,
+) -> Result<InstalledApp, InstallAppError> {
+    reporter.report(&OperationEvent::Started {
+        kind: OperationKind::Add,
+        label: source_input.to_owned(),
+    });
     let mut record =
         materialize_app_record(source_input, plan).map_err(InstallAppError::Materialize)?;
     let (family, capabilities) =
@@ -209,7 +234,12 @@ pub fn install_app(
         install_home,
         &policy.icon_root.join(format!("{}.png", record.stable_id)),
     );
-    let artifact_bytes = download_artifact_bytes(&plan.selected_artifact.url)?;
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::DownloadArtifact,
+        message: "downloading artifact".to_owned(),
+    });
+    let artifact_bytes =
+        download_artifact_bytes_with_reporter(&plan.selected_artifact.url, reporter)?;
     let payload_exec = payload_path.clone();
     let desktop_owned = match policy.integration_mode {
         IntegrationMode::PayloadOnly | IntegrationMode::Denied => None,
@@ -219,6 +249,21 @@ pub fn install_app(
         )),
     };
 
+    if desktop_owned.is_some() {
+        reporter.report(&OperationEvent::StageChanged {
+            stage: OperationStage::WriteDesktopEntry,
+            message: "writing desktop entry".to_owned(),
+        });
+        reporter.report(&OperationEvent::StageChanged {
+            stage: OperationStage::ExtractIcon,
+            message: "extracting icon".to_owned(),
+        });
+    }
+
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::StagePayload,
+        message: "staging payload".to_owned(),
+    });
     let install_outcome = execute_install(&InstallRequest {
         staging_root: &install_home.join(".local/share/aim/staging"),
         final_payload_path: &payload_path,
@@ -235,6 +280,18 @@ pub fn install_app(
     })
     .map_err(InstallAppError::Install)?;
 
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::RefreshIntegration,
+        message: "refreshing desktop integration".to_owned(),
+    });
+    if !install_outcome.warnings.is_empty() {
+        for warning in &install_outcome.warnings {
+            reporter.report(&OperationEvent::Warning {
+                message: warning.clone(),
+            });
+        }
+    }
+
     record.install = Some(InstallMetadata {
         scope: policy.scope,
         payload_path: Some(install_outcome.final_payload_path.display().to_string()),
@@ -248,7 +305,7 @@ pub fn install_app(
             .map(|path| path.display().to_string()),
     });
 
-    Ok(InstalledApp {
+    let installed = InstalledApp {
         record,
         selected_artifact: plan.selected_artifact.clone(),
         source: plan.resolution.source.clone(),
@@ -256,7 +313,13 @@ pub fn install_app(
         integration_mode: policy.integration_mode,
         install_outcome,
         warnings: policy.warnings,
-    })
+    };
+
+    reporter.report(&OperationEvent::Finished {
+        summary: format!("installed {}", installed.record.stable_id),
+    });
+
+    Ok(installed)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -287,21 +350,48 @@ pub enum InstallAppError {
     Materialize(MaterializeAddRecordError),
     Policy(String),
     Download(reqwest::Error),
+    DownloadIo(std::io::Error),
     HostProbe(std::io::Error),
     Install(crate::integration::install::PayloadInstallError),
 }
 
-fn download_artifact_bytes(url: &str) -> Result<Vec<u8>, InstallAppError> {
+fn download_artifact_bytes_with_reporter(
+    url: &str,
+    reporter: &mut impl ProgressReporter,
+) -> Result<Vec<u8>, InstallAppError> {
     if env::var(FIXTURE_MODE_ENV).ok().as_deref() == Some("1") {
-        return Ok(b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82".to_vec());
+        let bytes = b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82".to_vec();
+        reporter.report(&OperationEvent::Progress {
+            current: bytes.len() as u64,
+            total: Some(bytes.len() as u64),
+        });
+        return Ok(bytes);
     }
 
     let response = reqwest::blocking::get(url).map_err(InstallAppError::Download)?;
     let response = response
         .error_for_status()
         .map_err(InstallAppError::Download)?;
-    let bytes = response.bytes().map_err(InstallAppError::Download)?;
-    Ok(bytes.to_vec())
+    let total = response.content_length();
+    let mut response = response;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut current = 0_u64;
+
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(InstallAppError::DownloadIo)?;
+        if read == 0 {
+            break;
+        }
+
+        bytes.extend_from_slice(&buffer[..read]);
+        current += read as u64;
+        reporter.report(&OperationEvent::Progress { current, total });
+    }
+
+    Ok(bytes)
 }
 
 fn render_desktop_entry(display_name: &str, exec_path: &Path) -> String {

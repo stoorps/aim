@@ -1,5 +1,9 @@
+use aim_core::app::add::{build_add_plan_with, install_app_with_reporter};
+use aim_core::app::progress::{OperationEvent, OperationStage};
+use aim_core::domain::app::InstallScope;
 use aim_core::integration::install::{DesktopIntegrationRequest, InstallRequest, execute_install};
 use aim_core::platform::DesktopHelpers;
+use aim_core::source::github::FixtureGitHubTransport;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
@@ -124,4 +128,58 @@ fn install_extracts_icon_from_appimage_payload_when_icon_path_is_requested() {
             .unwrap()
             .starts_with(b"\x89PNG\r\n\x1a\n")
     );
+}
+
+#[test]
+fn install_app_reports_operation_stages_in_order() {
+    let root = tempdir().unwrap();
+    let plan = build_add_plan_with("sharkdp/bat", &FixtureGitHubTransport).unwrap();
+    let mut events: Vec<OperationEvent> = Vec::new();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let installed = install_app_with_reporter(
+        "sharkdp/bat",
+        &plan,
+        root.path(),
+        InstallScope::User,
+        &mut reporter,
+    )
+    .unwrap();
+
+    assert_eq!(installed.record.stable_id, "sharkdp-bat");
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::DownloadArtifact,
+        message: "downloading artifact".to_owned(),
+    }));
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::StagePayload,
+        message: "staging payload".to_owned(),
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::Progress {
+                current,
+                total: Some(total)
+            } if *current == *total
+        )
+    }));
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::WriteDesktopEntry,
+        message: "writing desktop entry".to_owned(),
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            OperationEvent::StageChanged {
+                stage: OperationStage::RefreshIntegration,
+                ..
+            }
+        )
+    }));
 }

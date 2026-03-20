@@ -39,7 +39,14 @@ By default `aim` auto-detects whether to use user or system scope. Override that
 
 ## Current Flow Shape
 
-- `aim <QUERY>` installs unambiguous apps, persists them into the registry after successful install, and renders review prompts when tracking needs confirmation
-- bare `aim` and `aim update` build a review-first update plan
-- `aim list` renders registered applications
-- `aim remove <QUERY>` resolves a registered application name before removal
+- `aim <QUERY>` installs unambiguous apps, shows live progress on stderr, prints an `Installation Summary` on stdout, and renders an `Installation Review` when tracking needs confirmation
+- bare `aim` prints an `Update Review` without mutating the registry
+- `aim update` executes the pending updates, streams live status on stderr, then prints an `Update Summary`
+- `aim list` renders either `Installed Apps` or `No installed apps yet`
+- `aim remove <QUERY>` resolves a registered application name, streams removal progress on stderr, then prints a `Removal Summary`
+
+## Terminal UX
+
+- prompts use `dialoguer`
+- styled summaries use `console`
+- live spinners and byte progress use `indicatif`

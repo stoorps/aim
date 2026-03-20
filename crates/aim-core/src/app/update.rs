@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::app::add::{build_add_plan, install_app};
+use crate::app::add::{build_add_plan, install_app_with_reporter};
+use crate::app::progress::{
+    NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
+};
 use crate::domain::app::{AppRecord, InstallScope};
 use crate::domain::update::{
     ChannelPreference, ExecutedUpdate, PlannedUpdate, UpdateChannelKind, UpdateExecutionResult,
@@ -17,11 +20,28 @@ pub fn execute_updates(
     apps: &[AppRecord],
     install_home: &Path,
 ) -> Result<UpdateExecutionResult, ExecuteUpdatesError> {
+    let mut reporter = NoopReporter;
+    execute_updates_with_reporter(apps, install_home, &mut reporter)
+}
+
+pub fn execute_updates_with_reporter(
+    apps: &[AppRecord],
+    install_home: &Path,
+    reporter: &mut impl ProgressReporter,
+) -> Result<UpdateExecutionResult, ExecuteUpdatesError> {
+    reporter.report(&OperationEvent::Started {
+        kind: OperationKind::UpdateBatch,
+        label: format!("{} apps", apps.len()),
+    });
     let mut updated_apps = Vec::with_capacity(apps.len());
     let mut items = Vec::with_capacity(apps.len());
 
     for app in apps {
-        match execute_update(app, install_home) {
+        reporter.report(&OperationEvent::Started {
+            kind: OperationKind::UpdateItem,
+            label: app.stable_id.clone(),
+        });
+        match execute_update(app, install_home, reporter) {
             Ok(updated) => {
                 let warnings = updated
                     .warnings
@@ -39,6 +59,9 @@ pub fn execute_updates(
                     status: UpdateExecutionStatus::Updated,
                 });
                 updated_apps.push(record);
+                reporter.report(&OperationEvent::Finished {
+                    summary: format!("updated {}", app.stable_id),
+                });
             }
             Err(reason) => {
                 items.push(ExecutedUpdate {
@@ -54,10 +77,20 @@ pub fn execute_updates(
         }
     }
 
-    Ok(UpdateExecutionResult {
+    let result = UpdateExecutionResult {
         apps: updated_apps,
         items,
-    })
+    };
+
+    reporter.report(&OperationEvent::Finished {
+        summary: format!(
+            "updated {}, failed {}",
+            result.updated_count(),
+            result.failed_count()
+        ),
+    });
+
+    Ok(result)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -107,18 +140,44 @@ fn plan_update(app: &AppRecord) -> PlannedUpdate {
 fn execute_update(
     app: &AppRecord,
     install_home: &Path,
+    reporter: &mut impl ProgressReporter,
 ) -> Result<crate::app::add::InstalledApp, String> {
-    let query = update_query(app).ok_or_else(|| "missing install source".to_owned())?;
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::ResolveQuery,
+        message: format!("resolving {}", app.stable_id),
+    });
+    let query = update_query(app).ok_or_else(|| {
+        let reason = "missing install source".to_owned();
+        reporter.report(&OperationEvent::Failed {
+            stage: OperationStage::ResolveQuery,
+            reason: reason.clone(),
+        });
+        reason
+    })?;
     let requested_scope = app
         .install
         .as_ref()
         .map(|install| install.scope)
         .unwrap_or(InstallScope::User);
-    let plan = build_add_plan(&query)
-        .map_err(|error| format!("failed to build update plan: {error:?}"))?;
+    let plan = build_add_plan(&query).map_err(|error| {
+        let reason = format!("failed to build update plan: {error:?}");
+        reporter.report(&OperationEvent::Failed {
+            stage: OperationStage::ResolveQuery,
+            reason: reason.clone(),
+        });
+        reason
+    })?;
 
-    install_app(&query, &plan, install_home, requested_scope)
-        .map_err(|error| format!("failed to install update: {error:?}"))
+    install_app_with_reporter(&query, &plan, install_home, requested_scope, reporter).map_err(
+        |error| {
+            let reason = format!("failed to install update: {error:?}");
+            reporter.report(&OperationEvent::Failed {
+                stage: OperationStage::Finalize,
+                reason: reason.clone(),
+            });
+            reason
+        },
+    )
 }
 
 fn update_query(app: &AppRecord) -> Option<String> {
