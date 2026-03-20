@@ -1,4 +1,5 @@
 use aim_core::app::add::AddPlan;
+use aim_core::domain::update::UpdateExecutionStatus;
 
 use crate::DispatchResult;
 
@@ -15,6 +16,7 @@ pub fn render_dispatch_result(result: &DispatchResult) -> String {
         DispatchResult::UpdatePlan(plan) => {
             render_update_summary(plan.items.len(), plan.items.len(), 0)
         }
+        DispatchResult::Updated(result) => render_updated_apps(result),
         DispatchResult::Noop => String::new(),
     }
 }
@@ -87,4 +89,30 @@ fn render_removed_app(removed: &aim_core::app::remove::RemovalResult) -> String 
     } else {
         format!("{summary}\n{warning_lines}")
     }
+}
+
+fn render_updated_apps(result: &aim_core::domain::update::UpdateExecutionResult) -> String {
+    let mut lines = vec![format!(
+        "updated apps: {}, failed: {}",
+        result.updated_count(),
+        result.failed_count()
+    )];
+
+    for item in &result.items {
+        match &item.status {
+            UpdateExecutionStatus::Updated => lines.push(format!(
+                "updated: {} ({}) {} -> {}",
+                item.display_name,
+                item.stable_id,
+                item.from_version.as_deref().unwrap_or("unknown"),
+                item.to_version.as_deref().unwrap_or("unknown")
+            )),
+            UpdateExecutionStatus::Failed { reason } => lines.push(format!(
+                "failed: {} ({}) {}",
+                item.display_name, item.stable_id, reason
+            )),
+        }
+    }
+
+    lines.join("\n")
 }

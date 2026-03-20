@@ -1,4 +1,6 @@
-use crate::adapters::traits::{AdapterCapabilities, AdapterResolution, SourceAdapter};
+use crate::adapters::traits::{
+    AdapterCapabilities, AdapterError, AdapterResolution, SourceAdapter,
+};
 use crate::app::query::resolve_query;
 use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 
@@ -14,24 +16,6 @@ impl GitHubAdapter {
     pub fn new() -> Self {
         Self
     }
-
-    pub fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, GitHubAdapterError> {
-        if source.kind != SourceKind::GitHub {
-            return Err(GitHubAdapterError::UnsupportedSource);
-        }
-
-        Ok(AdapterResolution {
-            source: source.clone(),
-            release: ResolvedRelease {
-                version: "latest".to_owned(),
-                prerelease: false,
-            },
-        })
-    }
-
-    pub fn normalize(&self, query: &str) -> Result<SourceRef, GitHubAdapterError> {
-        resolve_query(query).map_err(|_| GitHubAdapterError::UnsupportedSource)
-    }
 }
 
 impl SourceAdapter for GitHubAdapter {
@@ -45,9 +29,27 @@ impl SourceAdapter for GitHubAdapter {
             supports_exact_resolution: true,
         }
     }
-}
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum GitHubAdapterError {
-    UnsupportedSource,
+    fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
+        let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
+        if source.kind != SourceKind::GitHub {
+            return Err(AdapterError::UnsupportedQuery);
+        }
+
+        Ok(source)
+    }
+
+    fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
+        if source.kind != SourceKind::GitHub {
+            return Err(AdapterError::UnsupportedSource);
+        }
+
+        Ok(AdapterResolution {
+            source: source.clone(),
+            release: ResolvedRelease {
+                version: "latest".to_owned(),
+                prerelease: false,
+            },
+        })
+    }
 }

@@ -18,8 +18,7 @@ pub struct Cli {
 
 impl Cli {
     pub fn is_review_update_flow(&self) -> bool {
-        matches!(self.command, Some(Command::Update))
-            || (self.command.is_none() && self.query.is_none())
+        self.command.is_none() && self.query.is_none()
     }
 }
 

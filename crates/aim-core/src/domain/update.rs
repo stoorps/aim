@@ -1,3 +1,5 @@
+use crate::domain::app::AppRecord;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum ParsedMetadataKind {
     Unknown,
@@ -97,4 +99,42 @@ pub struct PlannedUpdate {
     pub display_name: String,
     pub selected_channel: ChannelPreference,
     pub selection_reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateExecutionResult {
+    pub apps: Vec<AppRecord>,
+    pub items: Vec<ExecutedUpdate>,
+}
+
+impl UpdateExecutionResult {
+    pub fn updated_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| item.status == UpdateExecutionStatus::Updated)
+            .count()
+    }
+
+    pub fn failed_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| matches!(item.status, UpdateExecutionStatus::Failed { .. }))
+            .count()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutedUpdate {
+    pub stable_id: String,
+    pub display_name: String,
+    pub from_version: Option<String>,
+    pub to_version: Option<String>,
+    pub warnings: Vec<String>,
+    pub status: UpdateExecutionStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UpdateExecutionStatus {
+    Updated,
+    Failed { reason: String },
 }

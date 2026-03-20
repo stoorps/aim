@@ -1,5 +1,7 @@
-use crate::adapters::traits::AdapterCapabilities;
-use crate::adapters::traits::SourceAdapter;
+use crate::adapters::traits::{
+    AdapterCapabilities, AdapterError, AdapterResolution, SourceAdapter,
+};
+use crate::domain::source::SourceRef;
 
 #[derive(Debug)]
 pub struct MockAdapter {
@@ -23,5 +25,13 @@ impl SourceAdapter for MockAdapter {
 
     fn capabilities(&self) -> AdapterCapabilities {
         self.capabilities
+    }
+
+    fn normalize(&self, _query: &str) -> Result<SourceRef, AdapterError> {
+        Err(AdapterError::UnsupportedQuery)
+    }
+
+    fn resolve(&self, _source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
+        Err(AdapterError::UnsupportedSource)
     }
 }

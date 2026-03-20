@@ -1,23 +1,10 @@
-use crate::adapters::traits::{AdapterCapabilities, AdapterResolution, SourceAdapter};
+use crate::adapters::traits::{
+    AdapterCapabilities, AdapterError, AdapterResolution, SourceAdapter,
+};
+use crate::app::query::resolve_query;
 use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 
 pub struct GitLabAdapter;
-
-impl GitLabAdapter {
-    pub fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, GitLabAdapterError> {
-        if source.kind != SourceKind::GitLab {
-            return Err(GitLabAdapterError::UnsupportedSource);
-        }
-
-        Ok(AdapterResolution {
-            source: source.clone(),
-            release: ResolvedRelease {
-                version: "latest".to_owned(),
-                prerelease: false,
-            },
-        })
-    }
-}
 
 impl SourceAdapter for GitLabAdapter {
     fn id(&self) -> &'static str {
@@ -30,9 +17,27 @@ impl SourceAdapter for GitLabAdapter {
             supports_exact_resolution: true,
         }
     }
-}
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum GitLabAdapterError {
-    UnsupportedSource,
+    fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
+        let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
+        if source.kind != SourceKind::GitLab {
+            return Err(AdapterError::UnsupportedQuery);
+        }
+
+        Ok(source)
+    }
+
+    fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
+        if source.kind != SourceKind::GitLab {
+            return Err(AdapterError::UnsupportedSource);
+        }
+
+        Ok(AdapterResolution {
+            source: source.clone(),
+            release: ResolvedRelease {
+                version: "latest".to_owned(),
+                prerelease: false,
+            },
+        })
+    }
 }
