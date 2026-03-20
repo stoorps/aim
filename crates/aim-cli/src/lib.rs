@@ -5,7 +5,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use aim_core::app::add::{
-    AddPlan, InstalledApp, build_add_plan, install_app_with_reporter, resolve_requested_scope,
+    AddPlan, InstalledApp, build_add_plan_with_reporter, install_app_with_reporter,
+    resolve_requested_scope,
 };
 use aim_core::app::list::{ListRow, build_list_rows};
 use aim_core::app::progress::{NoopReporter, OperationEvent, OperationStage, ProgressReporter};
@@ -86,7 +87,8 @@ pub fn dispatch_with_reporter(
 
     if let Some(query) = cli.query {
         let requested_scope = resolve_requested_scope(cli.system, cli.user, is_effective_root());
-        let mut plan = build_add_plan(&query)?;
+        let transport = aim_core::source::github::default_transport();
+        let mut plan = build_add_plan_with_reporter(&query, transport.as_ref(), reporter)?;
         if !plan.interactions.is_empty() {
             match ui::prompt::resolve_add_plan_interactions(plan.clone())? {
                 Some(resolved) => {

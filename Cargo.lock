@@ -23,7 +23,9 @@ dependencies = [
  "indicatif",
  "libc",
  "predicates",
+ "serde",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

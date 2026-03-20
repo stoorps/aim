@@ -39,14 +39,10 @@ fn render_added_app(added: &aim_core::app::add::InstalledApp) -> String {
         .collect::<Vec<_>>();
 
     let mut lines = vec![
-        crate::ui::theme::heading("Installation Summary"),
-        format!(
-            "{} {} ({})",
-            crate::ui::theme::label("Application"),
-            added.record.display_name,
-            added.record.stable_id,
-        ),
-        format!("{} {scope}", crate::ui::theme::label("Install scope")),
+        crate::ui::theme::heading(&format!(
+            "Installed {} ({scope})",
+            added.record.display_name
+        )),
         format!(
             "{} {} {}",
             crate::ui::theme::label("Source"),
@@ -54,12 +50,21 @@ fn render_added_app(added: &aim_core::app::add::InstalledApp) -> String {
             added.source.locator,
         ),
         format!(
-            "{} {} [{}]",
-            crate::ui::theme::label("Selected artifact"),
+            "{} {}",
+            crate::ui::theme::label("Artifact"),
             added.selected_artifact.url,
-            added.selected_artifact.selection_reason,
         ),
     ];
+
+    let installed_files = install_file_paths(added);
+    if !installed_files.is_empty() {
+        lines.push(crate::ui::theme::label("Installed files"));
+        lines.extend(
+            installed_files
+                .iter()
+                .map(|path| crate::ui::theme::bullet(path)),
+        );
+    }
 
     lines.extend(warning_lines);
     lines.join("\n")
@@ -91,14 +96,65 @@ fn render_list(rows: &[aim_core::app::list::ListRow]) -> String {
         return crate::ui::theme::muted("No installed apps yet");
     }
 
-    let mut output = format!("{}\n", crate::ui::theme::heading("Installed Apps"));
+    let name_width = rows
+        .iter()
+        .map(|row| row.display_name.len())
+        .max()
+        .unwrap_or(0)
+        .max("Name".len());
+    let version_width = rows
+        .iter()
+        .map(|row| row.version.as_deref().unwrap_or("-").len())
+        .max()
+        .unwrap_or(0)
+        .max("Version".len());
+
+    let mut lines = vec![crate::ui::theme::heading("Installed Apps")];
+    lines.push(format_list_row(
+        "Name",
+        "Version",
+        "Source",
+        name_width,
+        version_width,
+        true,
+    ));
+
     for row in rows {
-        output.push_str(&format!(
-            "{}\n",
-            crate::ui::theme::bullet(&format!("{} ({})", row.display_name, row.stable_id))
+        lines.push(format_list_row(
+            &row.display_name,
+            row.version.as_deref().unwrap_or("-"),
+            &row.source,
+            name_width,
+            version_width,
+            false,
         ));
     }
-    output.trim_end().to_owned()
+
+    lines.join("\n")
+}
+
+fn format_list_row(
+    name: &str,
+    version: &str,
+    source: &str,
+    name_width: usize,
+    version_width: usize,
+    is_header: bool,
+) -> String {
+    let row = format!(
+        "{name:<name_width$}  {version:<version_width$}  {source}",
+        name = name,
+        version = version,
+        source = source,
+        name_width = name_width,
+        version_width = version_width,
+    );
+
+    if is_header {
+        crate::ui::theme::label(&row)
+    } else {
+        row
+    }
 }
 
 fn render_removed_app(removed: &aim_core::app::remove::RemovalResult) -> String {
@@ -107,16 +163,48 @@ fn render_removed_app(removed: &aim_core::app::remove::RemovalResult) -> String 
         .iter()
         .map(|warning| format!("Warning: {warning}"))
         .collect::<Vec<_>>();
-    let mut lines = vec![
-        crate::ui::theme::heading("Removal Summary"),
-        format!(
-            "{} {}",
-            crate::ui::theme::label("Removed app"),
-            removed.removed.display_name,
-        ),
-    ];
+    let mut lines = vec![crate::ui::theme::heading(&format!(
+        "Removed {}",
+        removed.removed.display_name,
+    ))];
+
+    if !removed.removed_paths.is_empty() {
+        lines.push(crate::ui::theme::label("Removed files"));
+        lines.extend(
+            removed
+                .removed_paths
+                .iter()
+                .map(|path| crate::ui::theme::bullet(path)),
+        );
+    }
+
     lines.extend(warning_lines);
     lines.join("\n")
+}
+
+fn install_file_paths(added: &aim_core::app::add::InstalledApp) -> Vec<String> {
+    [
+        Some(
+            added
+                .install_outcome
+                .final_payload_path
+                .display()
+                .to_string(),
+        ),
+        added
+            .install_outcome
+            .desktop_entry_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        added
+            .install_outcome
+            .icon_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn render_updated_apps(result: &aim_core::domain::update::UpdateExecutionResult) -> String {

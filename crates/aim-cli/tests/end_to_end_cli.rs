@@ -37,7 +37,11 @@ fn list_command_reads_registered_apps_from_registry_file() {
         .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("Bat (bat)"));
+        .stdout(contains("Name"))
+        .stdout(contains("Version"))
+        .stdout(contains("Source"))
+        .stdout(contains("Bat"))
+        .stdout(contains("Bat (bat)").not());
 }
 
 #[test]
@@ -56,8 +60,9 @@ fn remove_command_removes_registered_app_from_registry_file() {
         .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("Removal Summary"))
-        .stdout(contains("Removed app: Bat"));
+        .stdout(contains("Removed Bat"))
+        .stdout(contains("Removal Summary").not())
+        .stdout(contains("Removed app:").not());
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(!contents.contains("stable_id = \"bat\""));
@@ -90,8 +95,14 @@ fn remove_command_uninstalls_managed_files() {
         .env("AIM_REGISTRY_PATH", &registry_path)
         .assert()
         .success()
-        .stdout(contains("Removal Summary"))
-        .stdout(contains("Removed app: bat"));
+        .stdout(contains("\nRemoved bat"))
+        .stdout(contains("Removed bat"))
+        .stdout(contains("Removal Summary").not())
+        .stdout(contains("Removed app:").not())
+        .stdout(contains("Removed files"))
+        .stdout(contains("sharkdp-bat.AppImage"))
+        .stdout(contains("aim-sharkdp-bat.desktop"))
+        .stdout(contains("sharkdp-bat.png"));
 
     assert!(!payload_path.exists());
     assert!(!desktop_path.exists());
@@ -109,8 +120,16 @@ fn query_command_registers_unambiguous_app_in_registry_file() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("Installation Summary"))
-        .stdout(contains("Application: bat (sharkdp-bat)"));
+        .stdout(contains("\nInstalled bat (user)"))
+        .stdout(contains("Installed bat (user)"))
+        .stdout(contains("Installation Summary").not())
+        .stdout(contains("Source: github sharkdp/bat"))
+        .stdout(contains("Artifact:"))
+        .stdout(contains("Selected artifact").not())
+        .stdout(contains("metadata-guided").not())
+        .stdout(contains("Installed files"))
+        .stdout(contains("sharkdp-bat.AppImage"))
+        .stdout(contains("Completed steps").not());
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"sharkdp-bat\""));
@@ -147,9 +166,16 @@ fn old_release_query_can_track_latest_and_register_app() {
         .env("AIM_TRACKING_PREFERENCE", "latest")
         .assert()
         .success()
-        .stdout(contains("Installation Summary"))
-        .stdout(contains("Application: t3code (pingdotgg-t3code)"))
-        .stdout(contains("Install scope: user"));
+        .stdout(contains("\nInstalled t3code (user)"))
+        .stdout(contains("Installed t3code (user)"))
+        .stdout(contains("Installation Summary").not())
+        .stdout(contains("Source: github pingdotgg/t3code"))
+        .stdout(contains("Artifact: T3-Code-0.0.12-x86_64.AppImage"))
+        .stdout(contains("Selected artifact").not())
+        .stdout(contains("metadata-guided").not())
+        .stdout(contains("Installed files"))
+        .stdout(contains("pingdotgg-t3code.AppImage"))
+        .stdout(contains("Completed steps").not());
 
     let contents = std::fs::read_to_string(&registry_path).unwrap();
     assert!(contents.contains("stable_id = \"pingdotgg-t3code\""));
@@ -167,8 +193,11 @@ fn cli_add_installs_and_renders_resolved_mode() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("Installation Summary"))
-        .stdout(contains("Selected artifact"));
+        .stdout(contains("\nInstalled bat (user)"))
+        .stdout(contains("Installed bat (user)"))
+        .stdout(contains("Artifact:"))
+        .stdout(contains("Installed files"))
+        .stdout(contains("Completed steps").not());
 }
 
 #[test]
@@ -183,8 +212,16 @@ fn cli_add_emits_live_progress_to_stderr() {
         .assert()
         .success()
         .stderr(contains("Installing sharkdp/bat"))
+        .stderr(contains("Resolving source"))
+        .stderr(contains("Discovering release"))
+        .stderr(contains("Selecting artifact"))
         .stderr(contains("Downloading artifact"))
-        .stderr(contains("Saving registry"));
+        .stderr(contains("Downloaded"))
+        .stderr(contains("Payload Staged"))
+        .stderr(contains("Desktop Entry Written"))
+        .stderr(contains("Icon Extracted"))
+        .stderr(contains("Desktop Integration Refreshed"))
+        .stderr(contains("Registry Saved"));
 }
 
 #[test]
@@ -258,8 +295,7 @@ fn system_request_on_immutable_host_falls_back_to_user_install() {
         .env(FIXTURE_MODE_ENV, "1")
         .assert()
         .success()
-        .stdout(contains("Installation Summary"))
-        .stdout(contains("Install scope: user"))
+        .stdout(contains("Installed bat (user)"))
         .stdout(contains("downgraded to user scope"));
 }
 

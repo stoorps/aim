@@ -1,4 +1,4 @@
-use aim_core::app::add::{build_add_plan_with, install_app_with_reporter};
+use aim_core::app::add::{build_add_plan_with_reporter, install_app_with_reporter};
 use aim_core::app::progress::{OperationEvent, OperationStage};
 use aim_core::domain::app::InstallScope;
 use aim_core::integration::install::{DesktopIntegrationRequest, InstallRequest, execute_install};
@@ -133,7 +133,6 @@ fn install_extracts_icon_from_appimage_payload_when_icon_path_is_requested() {
 #[test]
 fn install_app_reports_operation_stages_in_order() {
     let root = tempdir().unwrap();
-    let plan = build_add_plan_with("sharkdp/bat", &FixtureGitHubTransport).unwrap();
     let mut events: Vec<OperationEvent> = Vec::new();
 
     unsafe {
@@ -141,6 +140,9 @@ fn install_app_reports_operation_stages_in_order() {
     }
 
     let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let plan = build_add_plan_with_reporter("sharkdp/bat", &FixtureGitHubTransport, &mut reporter)
+        .unwrap();
 
     let installed = install_app_with_reporter(
         "sharkdp/bat",
@@ -152,6 +154,18 @@ fn install_app_reports_operation_stages_in_order() {
     .unwrap();
 
     assert_eq!(installed.record.stable_id, "sharkdp-bat");
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::ResolveQuery,
+        message: "resolving source".to_owned(),
+    }));
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::DiscoverRelease,
+        message: "discovering release".to_owned(),
+    }));
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::SelectArtifact,
+        message: "selecting artifact".to_owned(),
+    }));
     assert!(events.contains(&OperationEvent::StageChanged {
         stage: OperationStage::DownloadArtifact,
         message: "downloading artifact".to_owned(),
@@ -181,5 +195,34 @@ fn install_app_reports_operation_stages_in_order() {
                 ..
             }
         )
+    }));
+
+    let stage_order = events
+        .iter()
+        .filter_map(|event| match event {
+            OperationEvent::StageChanged { stage, .. } => Some(*stage),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(stage_order.windows(2).any(|window| {
+        window
+            == [
+                OperationStage::ResolveQuery,
+                OperationStage::DiscoverRelease,
+            ]
+    }));
+    assert!(stage_order.windows(2).any(|window| {
+        window
+            == [
+                OperationStage::DiscoverRelease,
+                OperationStage::SelectArtifact,
+            ]
+    }));
+    assert!(stage_order.windows(2).any(|window| {
+        window
+            == [
+                OperationStage::SelectArtifact,
+                OperationStage::DownloadArtifact,
+            ]
     }));
 }

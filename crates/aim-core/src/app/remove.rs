@@ -93,7 +93,7 @@ pub fn remove_registered_app_with_reporter(
         stage: OperationStage::StagePayload,
         message: "removing managed artifacts".to_owned(),
     });
-    let warnings = delete_artifacts(&plan)?;
+    let deletion = delete_artifacts(&plan)?;
     let remaining_apps = apps
         .iter()
         .filter(|candidate| candidate.stable_id != app.stable_id)
@@ -102,8 +102,9 @@ pub fn remove_registered_app_with_reporter(
 
     let result = RemovalResult {
         removed: plan,
+        removed_paths: deletion.removed_paths,
         remaining_apps,
-        warnings,
+        warnings: deletion.warnings,
     };
 
     reporter.report(&OperationEvent::StageChanged {
@@ -120,6 +121,7 @@ pub fn remove_registered_app_with_reporter(
 #[derive(Debug, Eq, PartialEq)]
 pub struct RemovalResult {
     pub removed: RemovalPlan,
+    pub removed_paths: Vec<String>,
     pub remaining_apps: Vec<AppRecord>,
     pub warnings: Vec<String>,
 }
@@ -161,13 +163,19 @@ fn removal_artifact_paths(app: &AppRecord, install_home: &Path) -> Vec<PathBuf> 
     ]
 }
 
-fn delete_artifacts(plan: &RemovalPlan) -> Result<Vec<String>, RemoveRegisteredAppError> {
+struct DeletionOutcome {
+    removed_paths: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn delete_artifacts(plan: &RemovalPlan) -> Result<DeletionOutcome, RemoveRegisteredAppError> {
     let desktop_path = plan.artifact_paths.get(1).map(PathBuf::from);
     let icon_path = plan.artifact_paths.get(2).map(PathBuf::from);
+    let mut removed_paths = Vec::new();
 
     for artifact_path in &plan.artifact_paths {
         match fs::remove_file(artifact_path) {
-            Ok(()) => {}
+            Ok(()) => removed_paths.push(artifact_path.clone()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(RemoveRegisteredAppError::Io(error)),
         }
@@ -182,5 +190,8 @@ fn delete_artifacts(plan: &RemovalPlan) -> Result<Vec<String>, RemoveRegisteredA
         ));
     }
 
-    Ok(warnings)
+    Ok(DeletionOutcome {
+        removed_paths,
+        warnings,
+    })
 }

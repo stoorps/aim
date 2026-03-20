@@ -27,19 +27,37 @@ const FIXTURE_MODE_ENV: &str = "AIM_GITHUB_FIXTURE_MODE";
 
 pub fn build_add_plan(query: &str) -> Result<AddPlan, BuildAddPlanError> {
     let transport = crate::source::github::default_transport();
-    build_add_plan_with(query, transport.as_ref())
+    let mut reporter = NoopReporter;
+    build_add_plan_with_reporter(query, transport.as_ref(), &mut reporter)
 }
 
 pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
     query: &str,
     transport: &T,
 ) -> Result<AddPlan, BuildAddPlanError> {
+    let mut reporter = NoopReporter;
+    build_add_plan_with_reporter(query, transport, &mut reporter)
+}
+
+pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
+    query: &str,
+    transport: &T,
+    reporter: &mut impl ProgressReporter,
+) -> Result<AddPlan, BuildAddPlanError> {
+    reporter.report(&OperationEvent::StageChanged {
+        stage: OperationStage::ResolveQuery,
+        message: "resolving source".to_owned(),
+    });
     let source = resolve_query(query).map_err(BuildAddPlanError::Query)?;
 
     let mut interactions = Vec::new();
     let mut parsed_metadata = Vec::new();
     let (resolution, selected_artifact, update_strategy) = match source.kind {
         SourceKind::GitHub => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::DiscoverRelease,
+                message: "discovering release".to_owned(),
+            });
             let discovery = discover_github_candidates_with(&source, transport)
                 .map_err(BuildAddPlanError::GitHubDiscovery)?;
             for document in &discovery.metadata_documents {
@@ -60,6 +78,10 @@ pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
                 .iter()
                 .find(|item| item.hints.primary_download.is_some())
                 .map(|item| &item.hints);
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
             let artifact = select_artifact(&preferred, metadata_hints);
 
             if discovery.requested_is_older_release {
@@ -89,6 +111,10 @@ pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
             )
         }
         _ => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
             let resolution = AdapterResolution {
                 source: source.clone(),
                 release: ResolvedRelease {
@@ -249,17 +275,6 @@ pub fn install_app_with_reporter(
         )),
     };
 
-    if desktop_owned.is_some() {
-        reporter.report(&OperationEvent::StageChanged {
-            stage: OperationStage::WriteDesktopEntry,
-            message: "writing desktop entry".to_owned(),
-        });
-        reporter.report(&OperationEvent::StageChanged {
-            stage: OperationStage::ExtractIcon,
-            message: "extracting icon".to_owned(),
-        });
-    }
-
     reporter.report(&OperationEvent::StageChanged {
         stage: OperationStage::StagePayload,
         message: "staging payload".to_owned(),
@@ -279,6 +294,20 @@ pub fn install_app_with_reporter(
         helpers: capabilities.helpers.clone(),
     })
     .map_err(InstallAppError::Install)?;
+
+    if install_outcome.desktop_entry_path.is_some() {
+        reporter.report(&OperationEvent::StageChanged {
+            stage: OperationStage::WriteDesktopEntry,
+            message: "writing desktop entry".to_owned(),
+        });
+    }
+
+    if install_outcome.icon_path.is_some() {
+        reporter.report(&OperationEvent::StageChanged {
+            stage: OperationStage::ExtractIcon,
+            message: "extracting icon".to_owned(),
+        });
+    }
 
     reporter.report(&OperationEvent::StageChanged {
         stage: OperationStage::RefreshIntegration,
@@ -308,6 +337,7 @@ pub fn install_app_with_reporter(
     let installed = InstalledApp {
         record,
         selected_artifact: plan.selected_artifact.clone(),
+        artifact_size_bytes: artifact_bytes.len() as u64,
         source: plan.resolution.source.clone(),
         install_scope: policy.scope,
         integration_mode: policy.integration_mode,
@@ -326,6 +356,7 @@ pub fn install_app_with_reporter(
 pub struct InstalledApp {
     pub record: AppRecord,
     pub selected_artifact: ArtifactCandidate,
+    pub artifact_size_bytes: u64,
     pub source: crate::domain::source::SourceRef,
     pub install_scope: InstallScope,
     pub integration_mode: IntegrationMode,

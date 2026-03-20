@@ -5,6 +5,7 @@ use aim_core::app::remove::{
     build_removal_plan, remove_registered_app_with_reporter, resolve_registered_app,
 };
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
+use aim_core::domain::source::{NormalizedSourceKind, SourceInputKind, SourceKind, SourceRef};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -20,9 +21,18 @@ fn list_flow_returns_display_rows_for_registered_apps() {
     let rows = build_list_rows(&[AppRecord {
         stable_id: "bat".to_owned(),
         display_name: "Bat".to_owned(),
-        source_input: None,
-        source: None,
-        installed_version: None,
+        source_input: Some("sharkdp/bat".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::GitHub,
+            input_kind: SourceInputKind::RepoShorthand,
+            normalized_kind: NormalizedSourceKind::GitHubRepository,
+            locator: "sharkdp/bat".to_owned(),
+            canonical_locator: Some("sharkdp/bat".to_owned()),
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: true,
+        }),
+        installed_version: Some("0.25.0".to_owned()),
         update_strategy: None,
         metadata: Vec::new(),
         install: None,
@@ -31,6 +41,8 @@ fn list_flow_returns_display_rows_for_registered_apps() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].stable_id, "bat");
     assert_eq!(rows[0].display_name, "Bat");
+    assert_eq!(rows[0].version.as_deref(), Some("0.25.0"));
+    assert_eq!(rows[0].source, "sharkdp/bat");
 }
 
 #[test]
@@ -162,6 +174,7 @@ fn remove_flow_reports_resolution_and_cleanup_events() {
             .unwrap();
 
     assert_eq!(result.removed.stable_id, "bat");
+    assert_eq!(result.removed_paths.len(), 0);
     assert!(events.iter().any(|event| {
         matches!(
             event,
