@@ -1,12 +1,32 @@
-use crate::adapters::traits::{AdapterCapabilities, AdapterResolution, SourceAdapter};
+use crate::adapters::traits::{
+    AdapterCapabilities, AdapterError, AdapterResolution, SourceAdapter,
+};
+use crate::app::query::resolve_query;
 use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 
 pub struct DirectUrlAdapter;
 
-impl DirectUrlAdapter {
-    pub fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, DirectUrlAdapterError> {
+impl SourceAdapter for DirectUrlAdapter {
+    fn id(&self) -> &'static str {
+        "direct-url"
+    }
+
+    fn capabilities(&self) -> AdapterCapabilities {
+        AdapterCapabilities::exact_resolution_only()
+    }
+
+    fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
+        let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
         if source.kind != SourceKind::DirectUrl {
-            return Err(DirectUrlAdapterError::UnsupportedSource);
+            return Err(AdapterError::UnsupportedQuery);
+        }
+
+        Ok(source)
+    }
+
+    fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
+        if source.kind != SourceKind::DirectUrl {
+            return Err(AdapterError::UnsupportedSource);
         }
 
         Ok(AdapterResolution {
@@ -17,19 +37,4 @@ impl DirectUrlAdapter {
             },
         })
     }
-}
-
-impl SourceAdapter for DirectUrlAdapter {
-    fn id(&self) -> &'static str {
-        "direct-url"
-    }
-
-    fn capabilities(&self) -> AdapterCapabilities {
-        AdapterCapabilities::exact_resolution_only()
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum DirectUrlAdapterError {
-    UnsupportedSource,
 }

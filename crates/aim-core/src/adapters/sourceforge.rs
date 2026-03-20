@@ -1,4 +1,7 @@
-use crate::adapters::traits::{AdapterCapabilities, SourceAdapter};
+use crate::adapters::traits::{
+    AdapterCapabilities, AdapterError, AdapterResolution, SourceAdapter,
+};
+use crate::domain::source::SourceRef;
 
 pub struct SourceForgeAdapter;
 
@@ -12,5 +15,13 @@ impl SourceAdapter for SourceForgeAdapter {
             supports_search: true,
             supports_exact_resolution: true,
         }
+    }
+
+    fn normalize(&self, _query: &str) -> Result<SourceRef, AdapterError> {
+        Err(AdapterError::UnsupportedQuery)
+    }
+
+    fn resolve(&self, _source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
+        Err(AdapterError::UnsupportedSource)
     }
 }

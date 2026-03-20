@@ -1,6 +1,7 @@
-use aim_core::app::update::build_update_plan;
-use aim_core::domain::app::AppRecord;
+use aim_core::app::update::{build_update_plan, execute_updates};
+use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use aim_core::domain::update::{ChannelPreference, UpdateChannelKind, UpdateStrategy};
+use tempfile::tempdir;
 
 #[test]
 fn empty_registry_produces_empty_plan() {
@@ -60,4 +61,30 @@ fn update_plan_uses_alternate_channel_after_preferred_failure() {
         "electron-builder"
     );
     assert_eq!(plan.items[0].selection_reason, "preferred-channel-failed");
+}
+
+#[test]
+fn failed_update_keeps_previous_app_record() {
+    let install_home = tempdir().unwrap();
+    let previous = AppRecord {
+        stable_id: "legacy-bat".to_owned(),
+        display_name: "Legacy Bat".to_owned(),
+        source_input: None,
+        source: None,
+        installed_version: Some("0.9.0".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.apps, vec![previous]);
+    assert_eq!(result.updated_count(), 0);
+    assert_eq!(result.failed_count(), 1);
 }

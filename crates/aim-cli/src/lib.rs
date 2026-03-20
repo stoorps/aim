@@ -9,9 +9,9 @@ use aim_core::app::add::{
 };
 use aim_core::app::list::{ListRow, build_list_rows};
 use aim_core::app::remove::{RemovalResult, remove_registered_app};
-use aim_core::app::update::build_update_plan;
+use aim_core::app::update::{build_update_plan, execute_updates};
 use aim_core::domain::app::AppRecord;
-use aim_core::domain::update::UpdatePlan;
+use aim_core::domain::update::{UpdateExecutionResult, UpdatePlan};
 use aim_core::registry::model::Registry;
 use aim_core::registry::store::RegistryStore;
 
@@ -44,7 +44,15 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
                 })?;
                 Ok(DispatchResult::Removed(Box::new(removal)))
             }
-            cli::args::Command::Update => Ok(DispatchResult::UpdatePlan(build_update_plan(&apps)?)),
+            cli::args::Command::Update => {
+                let updates = execute_updates(&apps, &install_home)?;
+                let updated_apps = updates.apps.clone();
+                store.save(&Registry {
+                    version: registry.version,
+                    apps: updated_apps,
+                })?;
+                Ok(DispatchResult::Updated(Box::new(updates)))
+            }
         };
     }
 
@@ -94,6 +102,7 @@ pub enum DispatchResult {
     PendingAdd(Box<AddPlan>),
     Removed(Box<RemovalResult>),
     UpdatePlan(UpdatePlan),
+    Updated(Box<UpdateExecutionResult>),
     Noop,
 }
 
@@ -105,6 +114,7 @@ pub enum DispatchError {
     RemovePlan(aim_core::app::remove::RemoveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
     UpdatePlan(aim_core::app::update::BuildUpdatePlanError),
+    UpdateExecution(aim_core::app::update::ExecuteUpdatesError),
 }
 
 impl From<aim_core::app::add::BuildAddPlanError> for DispatchError {
@@ -128,6 +138,12 @@ impl From<ui::prompt::PromptError> for DispatchError {
 impl From<aim_core::app::update::BuildUpdatePlanError> for DispatchError {
     fn from(value: aim_core::app::update::BuildUpdatePlanError) -> Self {
         Self::UpdatePlan(value)
+    }
+}
+
+impl From<aim_core::app::update::ExecuteUpdatesError> for DispatchError {
+    fn from(value: aim_core::app::update::ExecuteUpdatesError) -> Self {
+        Self::UpdateExecution(value)
     }
 }
 

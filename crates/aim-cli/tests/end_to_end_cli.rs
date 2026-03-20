@@ -1,4 +1,8 @@
+use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
+use aim_core::registry::model::Registry;
+use aim_core::registry::store::RegistryStore;
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use tempfile::tempdir;
 
@@ -178,4 +182,50 @@ fn system_request_on_immutable_host_falls_back_to_user_install() {
         .success()
         .stdout(contains("installing as user"))
         .stdout(contains("downgraded to user scope"));
+}
+
+#[test]
+fn update_command_applies_updates() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let payload_path = dir
+        .path()
+        .join("install-home/.local/lib/aim/appimages/pingdotgg-t3code.AppImage");
+    let store = RegistryStore::new(registry_path.clone());
+    store
+        .save(&Registry {
+            version: 1,
+            apps: vec![AppRecord {
+                stable_id: "pingdotgg-t3code".to_owned(),
+                display_name: "t3code".to_owned(),
+                source_input: Some("pingdotgg/t3code".to_owned()),
+                source: None,
+                installed_version: Some("0.0.11".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: Some(InstallMetadata {
+                    scope: InstallScope::User,
+                    payload_path: None,
+                    desktop_entry_path: None,
+                    icon_path: None,
+                }),
+            }],
+        })
+        .unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("update")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("updated apps: 1"))
+        .stdout(contains("updates found:").not());
+
+    let updated = store.load().unwrap();
+    assert_eq!(updated.apps.len(), 1);
+    assert_eq!(updated.apps[0].stable_id, "pingdotgg-t3code");
+    assert_eq!(updated.apps[0].installed_version.as_deref(), Some("0.0.12"));
+    assert!(payload_path.exists());
 }
