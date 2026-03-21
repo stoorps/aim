@@ -34,10 +34,20 @@ use crate::update::ranking::{rank_channels, select_artifact, to_preference};
 
 const FIXTURE_MODE_ENV: &str = "AIM_GITHUB_FIXTURE_MODE";
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AddSecurityPolicy {
+    pub allow_http_user_sources: bool,
+}
+
 pub fn build_add_plan(query: &str) -> Result<AddPlan, BuildAddPlanError> {
     let transport = crate::source::github::default_transport();
     let mut reporter = NoopReporter;
-    build_add_plan_with_reporter(query, transport.as_ref(), &mut reporter)
+    build_add_plan_with_reporter_and_policy(
+        query,
+        transport.as_ref(),
+        &mut reporter,
+        AddSecurityPolicy::default(),
+    )
 }
 
 pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
@@ -45,7 +55,12 @@ pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
     transport: &T,
 ) -> Result<AddPlan, BuildAddPlanError> {
     let mut reporter = NoopReporter;
-    build_add_plan_with_reporter(query, transport, &mut reporter)
+    build_add_plan_with_reporter_and_policy(
+        query,
+        transport,
+        &mut reporter,
+        AddSecurityPolicy::default(),
+    )
 }
 
 pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
@@ -53,11 +68,26 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
     transport: &T,
     reporter: &mut impl ProgressReporter,
 ) -> Result<AddPlan, BuildAddPlanError> {
+    build_add_plan_with_reporter_and_policy(
+        query,
+        transport,
+        reporter,
+        AddSecurityPolicy::default(),
+    )
+}
+
+pub fn build_add_plan_with_reporter_and_policy<T: GitHubTransport + ?Sized>(
+    query: &str,
+    transport: &T,
+    reporter: &mut impl ProgressReporter,
+    policy: AddSecurityPolicy,
+) -> Result<AddPlan, BuildAddPlanError> {
     reporter.report(&OperationEvent::StageChanged {
         stage: OperationStage::ResolveQuery,
         message: "resolving source".to_owned(),
     });
     let source = resolve_query(query).map_err(BuildAddPlanError::Query)?;
+    validate_source_transport_policy(&source, policy)?;
 
     let mut interactions = Vec::new();
     let mut parsed_metadata = Vec::new();
@@ -154,6 +184,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 version: resolution.release.version.clone(),
                 arch: None,
                 trusted_checksum: None,
+                weak_checksum_md5: None,
                 selection_reason: "provider-release".to_owned(),
             };
 
@@ -197,6 +228,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 version: resolved_item.version.clone(),
                 arch: resolved_item.download.arch.clone(),
                 trusted_checksum: None,
+                weak_checksum_md5: resolved_item.download.md5sum.clone(),
                 selection_reason: "provider-release".to_owned(),
             };
             let strategy = UpdateStrategy {
@@ -230,6 +262,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 version: resolution.release.version.clone(),
                 arch: None,
                 trusted_checksum: None,
+                weak_checksum_md5: None,
                 selection_reason: "exact-input".to_owned(),
             };
             let strategy = UpdateStrategy {
@@ -270,6 +303,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 version: resolution.release.version.clone(),
                 arch: None,
                 trusted_checksum: None,
+                weak_checksum_md5: None,
                 selection_reason: "provider-release".to_owned(),
             };
             let strategy = UpdateStrategy {
@@ -300,6 +334,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 version: "unresolved".to_owned(),
                 arch: None,
                 trusted_checksum: None,
+                weak_checksum_md5: None,
                 selection_reason: "heuristic-match".to_owned(),
             };
             let strategy = UpdateStrategy {
@@ -464,6 +499,7 @@ pub fn install_app_with_reporter(
         staged_payload_path: &staged_payload_path,
         final_payload_path: &payload_path,
         trusted_checksum: plan.selected_artifact.trusted_checksum.as_deref(),
+        weak_checksum_md5: plan.selected_artifact.weak_checksum_md5.as_deref(),
         desktop: desktop_owned.as_ref().map(|(path, contents)| {
             crate::integration::install::DesktopIntegrationRequest {
                 desktop_entry_path: path.as_path(),
@@ -548,6 +584,9 @@ pub struct InstalledApp {
 #[derive(Debug)]
 pub enum BuildAddPlanError {
     Query(ResolveQueryError),
+    InsecureHttpSource {
+        locator: String,
+    },
     Adapter(&'static str, crate::adapters::traits::AdapterError),
     GitHubDiscovery(GitHubDiscoveryError),
     NoInstallableArtifact {
@@ -569,6 +608,19 @@ pub enum InstallAppError {
     DownloadIo(std::io::Error),
     HostProbe(std::io::Error),
     Install(crate::integration::install::PayloadInstallError),
+}
+
+fn validate_source_transport_policy(
+    source: &crate::domain::source::SourceRef,
+    policy: AddSecurityPolicy,
+) -> Result<(), BuildAddPlanError> {
+    if source.locator.starts_with("http://") && !policy.allow_http_user_sources {
+        return Err(BuildAddPlanError::InsecureHttpSource {
+            locator: source.locator.clone(),
+        });
+    }
+
+    Ok(())
 }
 
 fn download_artifact_to_staged_path_with_reporter(
@@ -685,10 +737,30 @@ fn is_retryable_download_error(error: &InstallAppError) -> bool {
 }
 
 fn render_desktop_entry(display_name: &str, exec_path: &Path) -> String {
+    let display_name = sanitize_desktop_entry_name(display_name);
     format!(
         "[Desktop Entry]\nName={display_name}\nExec={}\nType=Application\nCategories=Utility;\n",
         exec_path.display()
     )
+}
+
+fn sanitize_desktop_entry_name(display_name: &str) -> String {
+    let sanitized = display_name
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '\n' | '\r') || ch.is_control() {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if sanitized.is_empty() {
+        "app".to_owned()
+    } else {
+        sanitized
+    }
 }
 
 fn resolve_target_path(install_home: &Path, target: &Path) -> PathBuf {

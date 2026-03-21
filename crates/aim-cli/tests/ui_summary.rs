@@ -161,6 +161,7 @@ fn install_summary_omits_completed_steps_recap() {
             version: "0.25.0".to_owned(),
             arch: Some("x86_64".to_owned()),
             trusted_checksum: None,
+            weak_checksum_md5: None,
             selection_reason: "heuristic-match".to_owned(),
         },
         artifact_size_bytes: 173_015_040,

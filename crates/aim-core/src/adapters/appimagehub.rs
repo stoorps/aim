@@ -4,7 +4,7 @@ use crate::adapters::traits::{
 use crate::app::query::resolve_query;
 use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 use crate::source::appimagehub::{
-    AppImageHubTransport, resolve_appimagehub_item, resolve_appimagehub_item_with,
+    AppImageHubError, AppImageHubTransport, resolve_appimagehub_item, resolve_appimagehub_item_with,
 };
 
 pub struct AppImageHubAdapter;
@@ -20,7 +20,7 @@ impl AppImageHubAdapter {
         }
 
         let resolved = resolve_appimagehub_item_with(source, transport)
-            .map_err(|error| AdapterError::ResolutionFailed(format!("{error:?}")))?;
+            .map_err(|error| AdapterError::ResolutionFailed(render_appimagehub_error(&error)))?;
 
         match resolved {
             Some(item) => Ok(AdapterResolveOutcome::Resolved(AdapterResolution {
@@ -64,7 +64,7 @@ impl SourceAdapter for AppImageHubAdapter {
 
     fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, AdapterError> {
         match resolve_appimagehub_item(source)
-            .map_err(|error| AdapterError::ResolutionFailed(format!("{error:?}")))?
+            .map_err(|error| AdapterError::ResolutionFailed(render_appimagehub_error(&error)))?
         {
             Some(item) => Ok(AdapterResolution {
                 source: item.source,
@@ -85,5 +85,21 @@ impl SourceAdapter for AppImageHubAdapter {
     ) -> Result<AdapterResolveOutcome, AdapterError> {
         let transport = crate::source::appimagehub::default_transport();
         self.resolve_source_with(source, transport.as_ref())
+    }
+}
+
+fn render_appimagehub_error(error: &AppImageHubError) -> String {
+    match error {
+        AppImageHubError::FixtureItemMissing(id) => {
+            format!("missing appimagehub fixture item {id}")
+        }
+        AppImageHubError::InsecureDownloadUrl(url) => {
+            format!("insecure appimagehub download url: {url}")
+        }
+        AppImageHubError::Parse(error) => error.to_string(),
+        AppImageHubError::Transport(error) => error.to_string(),
+        AppImageHubError::UnsupportedSource(locator) => {
+            format!("unsupported appimagehub source: {locator}")
+        }
     }
 }

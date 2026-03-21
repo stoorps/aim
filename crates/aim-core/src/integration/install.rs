@@ -30,6 +30,8 @@ pub enum PayloadInstallError {
     InvalidArtifact,
     ChecksumMismatch,
     InvalidTrustedChecksum,
+    InvalidWeakChecksum,
+    WeakChecksumMismatch,
     Io(io::Error),
     DesktopIntegration(io::Error),
 }
@@ -46,6 +48,13 @@ impl fmt::Display for PayloadInstallError {
             Self::InvalidArtifact => write!(f, "artifact is not a valid AppImage"),
             Self::ChecksumMismatch => write!(f, "artifact checksum did not match trusted metadata"),
             Self::InvalidTrustedChecksum => write!(f, "trusted checksum metadata is malformed"),
+            Self::InvalidWeakChecksum => write!(f, "weak provider checksum metadata is malformed"),
+            Self::WeakChecksumMismatch => {
+                write!(
+                    f,
+                    "weak provider checksum did not match downloaded artifact"
+                )
+            }
             Self::Io(error) => write!(f, "payload installation failed: {error}"),
             Self::DesktopIntegration(error) => {
                 write!(f, "desktop integration failed: {error}")
@@ -74,6 +83,7 @@ pub struct InstallRequest<'a> {
     pub staged_payload_path: &'a Path,
     pub final_payload_path: &'a Path,
     pub trusted_checksum: Option<&'a str>,
+    pub weak_checksum_md5: Option<&'a str>,
     pub desktop: Option<DesktopIntegrationRequest<'a>>,
     pub helpers: DesktopHelpers,
 }
@@ -124,6 +134,7 @@ pub fn execute_install(
     request: &InstallRequest<'_>,
 ) -> Result<InstallOutcome, PayloadInstallError> {
     verify_trusted_checksum(request.staged_payload_path, request.trusted_checksum)?;
+    verify_weak_checksum_md5(request.staged_payload_path, request.weak_checksum_md5)?;
     let payload =
         stage_and_commit_payload(request.staged_payload_path, request.final_payload_path)?;
 
@@ -193,6 +204,33 @@ fn verify_trusted_checksum(
     if actual_checksum != trusted_checksum {
         let _ = fs::remove_file(staged_payload_path);
         return Err(PayloadInstallError::ChecksumMismatch);
+    }
+
+    Ok(())
+}
+
+fn verify_weak_checksum_md5(
+    staged_payload_path: &Path,
+    weak_checksum_md5: Option<&str>,
+) -> Result<(), PayloadInstallError> {
+    let Some(weak_checksum_md5) = weak_checksum_md5.map(str::trim) else {
+        return Ok(());
+    };
+
+    if weak_checksum_md5.len() != 32
+        || !weak_checksum_md5
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        let _ = fs::remove_file(staged_payload_path);
+        return Err(PayloadInstallError::InvalidWeakChecksum);
+    }
+
+    let payload = fs::read(staged_payload_path)?;
+    let actual_checksum = format!("{:x}", md5::compute(payload));
+    if actual_checksum != weak_checksum_md5.to_ascii_lowercase() {
+        let _ = fs::remove_file(staged_payload_path);
+        return Err(PayloadInstallError::WeakChecksumMismatch);
     }
 
     Ok(())

@@ -30,6 +30,7 @@ fn install_writes_desktop_entry_and_reports_refresh_warning_only() {
         staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
         trusted_checksum: None,
+        weak_checksum_md5: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",
@@ -83,6 +84,7 @@ fn install_executes_refresh_helpers_when_available() {
         staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
         trusted_checksum: None,
+        weak_checksum_md5: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",
@@ -124,6 +126,7 @@ fn install_extracts_icon_from_appimage_payload_when_icon_path_is_requested() {
         staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
         trusted_checksum: None,
+        weak_checksum_md5: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",
@@ -238,6 +241,46 @@ fn install_app_reports_operation_stages_in_order() {
                 OperationStage::DownloadArtifact,
             ]
     }));
+}
+
+#[test]
+fn install_app_sanitizes_desktop_entry_display_names() {
+    let root = tempdir().unwrap();
+    let mut reporter = Vec::new();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut capture = |event: &OperationEvent| reporter.push(event.clone());
+    let mut plan =
+        build_add_plan_with_reporter("sharkdp/bat", &FixtureGitHubTransport, &mut capture).unwrap();
+    plan.display_name_hint = Some("Bat\nExec=evil".to_owned());
+
+    let installed = install_app_with_reporter(
+        "sharkdp/bat",
+        &plan,
+        root.path(),
+        InstallScope::User,
+        &mut capture,
+    )
+    .unwrap();
+
+    let desktop_path = installed
+        .install_outcome
+        .desktop_entry_path
+        .as_ref()
+        .unwrap();
+    let contents = fs::read_to_string(desktop_path).unwrap();
+
+    assert!(contents.contains("Name=Bat Exec=evil"));
+    assert_eq!(
+        contents
+            .lines()
+            .filter(|line| line.starts_with("Exec="))
+            .count(),
+        1
+    );
 }
 
 #[test]

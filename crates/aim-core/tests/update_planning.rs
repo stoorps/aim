@@ -1,5 +1,9 @@
-use aim_core::app::progress::{OperationEvent, OperationStage};
-use aim_core::app::update::{build_update_plan, execute_updates, execute_updates_with_reporter};
+use aim_core::app::add::AddSecurityPolicy;
+use aim_core::app::progress::{NoopReporter, OperationEvent, OperationStage};
+use aim_core::app::update::{
+    build_update_plan, execute_updates, execute_updates_with_reporter,
+    execute_updates_with_reporter_and_policy,
+};
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use aim_core::domain::source::{NormalizedSourceKind, SourceInputKind, SourceKind, SourceRef};
 use aim_core::domain::update::{ChannelPreference, UpdateChannelKind, UpdateStrategy};
@@ -309,6 +313,103 @@ fn update_execution_rebuilds_sourceforge_release_folder_without_rewriting_origin
             .as_deref(),
         Some("team-app")
     );
+}
+
+#[test]
+fn direct_http_updates_are_rejected_by_default() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let previous = AppRecord {
+        stable_id: "url-example.com-downloads-team-app.appimage".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some("http://example.com/downloads/team-app.AppImage".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::DirectUrl,
+            locator: "http://example.com/downloads/team-app.AppImage".to_owned(),
+            input_kind: SourceInputKind::DirectUrl,
+            normalized_kind: NormalizedSourceKind::DirectUrl,
+            canonical_locator: None,
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: false,
+        }),
+        installed_version: Some("unresolved".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.updated_count(), 0);
+    assert_eq!(result.failed_count(), 1);
+    assert!(matches!(
+        &result.items[0].status,
+        aim_core::domain::update::UpdateExecutionStatus::Failed { reason }
+            if reason.contains("InsecureHttpSource")
+    ));
+}
+
+#[test]
+fn direct_http_updates_can_be_allowed_by_policy() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let previous = AppRecord {
+        stable_id: "url-example.com-downloads-team-app.appimage".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some("http://example.com/downloads/team-app.AppImage".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::DirectUrl,
+            locator: "http://example.com/downloads/team-app.AppImage".to_owned(),
+            input_kind: SourceInputKind::DirectUrl,
+            normalized_kind: NormalizedSourceKind::DirectUrl,
+            canonical_locator: None,
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: false,
+        }),
+        installed_version: Some("unresolved".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates_with_reporter_and_policy(
+        std::slice::from_ref(&previous),
+        install_home.path(),
+        &mut NoopReporter,
+        AddSecurityPolicy {
+            allow_http_user_sources: true,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.updated_count(), 1);
+    assert_eq!(result.failed_count(), 0);
 }
 
 #[test]

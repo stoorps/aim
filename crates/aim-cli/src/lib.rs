@@ -7,8 +7,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use aim_core::app::add::{
-    AddPlan, InstalledApp, build_add_plan_with_reporter, install_app_with_reporter,
-    resolve_requested_scope,
+    AddPlan, AddSecurityPolicy, InstalledApp, build_add_plan_with_reporter_and_policy,
+    install_app_with_reporter, resolve_requested_scope,
 };
 use aim_core::app::list::{ListRow, build_list_rows};
 use aim_core::app::progress::{
@@ -17,7 +17,7 @@ use aim_core::app::progress::{
 use aim_core::app::remove::{RemovalResult, remove_registered_app_with_reporter};
 use aim_core::app::search::build_search_results;
 use aim_core::app::show::{build_installed_show_results, build_show_result};
-use aim_core::app::update::{build_update_plan, execute_updates_with_reporter};
+use aim_core::app::update::{build_update_plan, execute_updates_with_reporter_and_policy};
 use aim_core::domain::app::AppRecord;
 use aim_core::domain::search::{SearchQuery, SearchResults};
 use aim_core::domain::show::{InstalledShow, ShowResult};
@@ -37,6 +37,14 @@ pub fn dispatch(cli: Cli) -> Result<DispatchResult, DispatchError> {
 
 pub fn dispatch_with_reporter(
     cli: Cli,
+    reporter: &mut impl ProgressReporter,
+) -> Result<DispatchResult, DispatchError> {
+    dispatch_with_reporter_and_config(cli, &crate::config::CliConfig::default(), reporter)
+}
+
+pub fn dispatch_with_reporter_and_config(
+    cli: Cli,
+    config: &crate::config::CliConfig,
     reporter: &mut impl ProgressReporter,
 ) -> Result<DispatchResult, DispatchError> {
     let registry_path = registry_path();
@@ -86,7 +94,14 @@ pub fn dispatch_with_reporter(
                 None => Ok(DispatchResult::ShowAll(build_installed_show_results(&apps))),
             },
             cli::args::Command::Update => {
-                let updates = execute_updates_with_reporter(&apps, &install_home, reporter)?;
+                let updates = execute_updates_with_reporter_and_policy(
+                    &apps,
+                    &install_home,
+                    reporter,
+                    AddSecurityPolicy {
+                        allow_http_user_sources: config.allow_http,
+                    },
+                )?;
                 reporter.report(&OperationEvent::StageChanged {
                     stage: OperationStage::SaveRegistry,
                     message: "saving registry".to_owned(),
@@ -109,7 +124,14 @@ pub fn dispatch_with_reporter(
     if let Some(query) = cli.query {
         let requested_scope = resolve_requested_scope(cli.system, cli.user, is_effective_root());
         let transport = aim_core::source::github::default_transport();
-        let plan_result = build_add_plan_with_reporter(&query, transport.as_ref(), reporter);
+        let plan_result = build_add_plan_with_reporter_and_policy(
+            &query,
+            transport.as_ref(),
+            reporter,
+            AddSecurityPolicy {
+                allow_http_user_sources: config.allow_http,
+            },
+        );
         let mut plan = match plan_result {
             Ok(plan) => plan,
             Err(
@@ -209,6 +231,10 @@ impl std::fmt::Display for DispatchError {
                 aim_core::app::add::BuildAddPlanError::Query(
                     aim_core::app::query::ResolveQueryError::Unsupported,
                 ) => write!(f, "unsupported source query"),
+                aim_core::app::add::BuildAddPlanError::InsecureHttpSource { .. } => write!(
+                    f,
+                    "insecure HTTP sources are disabled; set allow_http = true to permit them"
+                ),
                 aim_core::app::add::BuildAddPlanError::NoInstallableArtifact { source } => write!(
                     f,
                     "no installable artifact found for {} {}",
@@ -233,7 +259,7 @@ impl std::fmt::Display for DispatchError {
                     write!(f, "no installable candidates found")
                 }
             },
-            Self::AddInstall(error) => write!(f, "install failed: {error:?}"),
+            Self::AddInstall(error) => write!(f, "install failed: {}", render_install_error(error)),
             Self::Prompt(error) => write!(f, "prompt failed: {error:?}"),
             Self::RemovePlan(error) => write!(f, "remove failed: {error:?}"),
             Self::Registry(error) => write!(f, "registry failed: {error:?}"),
@@ -250,6 +276,10 @@ impl std::fmt::Display for DispatchError {
                 aim_core::domain::show::ShowResultError::UnsupportedQuery => {
                     write!(f, "unsupported source query")
                 }
+                aim_core::domain::show::ShowResultError::InsecureHttpSource => write!(
+                    f,
+                    "insecure HTTP sources are disabled; set allow_http = true to permit them"
+                ),
                 aim_core::domain::show::ShowResultError::NoInstallableArtifact { source } => {
                     write!(
                         f,
@@ -304,6 +334,17 @@ impl std::fmt::Display for DispatchError {
             Self::UpdatePlan(error) => write!(f, "update planning failed: {error:?}"),
             Self::UpdateExecution(error) => write!(f, "update execution failed: {error:?}"),
         }
+    }
+}
+
+fn render_install_error(error: &aim_core::app::add::InstallAppError) -> String {
+    match error {
+        aim_core::app::add::InstallAppError::Materialize(error) => format!("{error:?}"),
+        aim_core::app::add::InstallAppError::Policy(error) => error.clone(),
+        aim_core::app::add::InstallAppError::Download(error) => error.to_string(),
+        aim_core::app::add::InstallAppError::DownloadIo(error) => error.to_string(),
+        aim_core::app::add::InstallAppError::HostProbe(error) => error.to_string(),
+        aim_core::app::add::InstallAppError::Install(error) => error.to_string(),
     }
 }
 

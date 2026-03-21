@@ -85,6 +85,8 @@ pub fn resolve_appimagehub_item_with<T: AppImageHubTransport + ?Sized>(
         return Ok(None);
     };
 
+    validate_download_url(&download.url)?;
+
     Ok(Some(ResolvedAppImageHubItem {
         source: source.clone(),
         title: item.name.clone(),
@@ -190,6 +192,7 @@ impl AppImageHubTransport for FixtureAppImageHubTransport {
 #[derive(Debug)]
 pub enum AppImageHubError {
     FixtureItemMissing(String),
+    InsecureDownloadUrl(String),
     Parse(quick_xml::DeError),
     Transport(reqwest::Error),
     UnsupportedSource(String),
@@ -298,6 +301,14 @@ fn content_to_item(content: OcsContent) -> AppImageHubItem {
         tags,
         downloads,
     }
+}
+
+fn validate_download_url(url: &str) -> Result<(), AppImageHubError> {
+    if !url.starts_with("https://") {
+        return Err(AppImageHubError::InsecureDownloadUrl(url.to_owned()));
+    }
+
+    Ok(())
 }
 
 fn collect_downloads(content: &OcsContent) -> Vec<AppImageHubDownload> {
@@ -413,6 +424,12 @@ fn resolved_version(item: &AppImageHubItem, download: &AppImageHubDownload) -> S
 }
 
 fn fixture_item(id: &str) -> Option<AppImageHubItem> {
+    let insecure_http = env::var("AIM_APPIMAGEHUB_FIXTURE_INSECURE_HTTP")
+        .ok()
+        .as_deref()
+        == Some("1");
+    let bad_md5 = env::var("AIM_APPIMAGEHUB_FIXTURE_BAD_MD5").ok().as_deref() == Some("1");
+
     match id {
         "2338455" => Some(AppImageHubItem {
             id: "2338455".to_owned(),
@@ -427,12 +444,20 @@ fn fixture_item(id: &str) -> Option<AppImageHubItem> {
                 "release-stable".to_owned(),
             ],
             downloads: vec![AppImageHubDownload {
-                url: "https://files06.pling.com/api/files/download/firefox-x86-64.AppImage"
-                    .to_owned(),
+                url: if insecure_http {
+                    "http://files06.pling.com/api/files/download/firefox-x86-64.AppImage".to_owned()
+                } else {
+                    "https://files06.pling.com/api/files/download/firefox-x86-64.AppImage"
+                        .to_owned()
+                },
                 name: "firefox-x86-64.AppImage".to_owned(),
                 package_type: Some("appimage".to_owned()),
                 arch: Some("x86-64".to_owned()),
-                md5sum: Some("1befdc026535be03a6001f33b11ef91d".to_owned()),
+                md5sum: Some(if bad_md5 {
+                    "00000000000000000000000000000000".to_owned()
+                } else {
+                    "2a685cf45213d5a2a243273fa68dafa6".to_owned()
+                }),
                 version: None,
             }],
         }),

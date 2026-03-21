@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::app::add::{build_add_plan, install_app_with_reporter};
+use crate::app::add::{
+    AddSecurityPolicy, build_add_plan_with_reporter_and_policy, install_app_with_reporter,
+};
 use crate::app::progress::{
     NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
 };
@@ -23,13 +25,32 @@ pub fn execute_updates(
     install_home: &Path,
 ) -> Result<UpdateExecutionResult, ExecuteUpdatesError> {
     let mut reporter = NoopReporter;
-    execute_updates_with_reporter(apps, install_home, &mut reporter)
+    execute_updates_with_reporter_and_policy(
+        apps,
+        install_home,
+        &mut reporter,
+        AddSecurityPolicy::default(),
+    )
 }
 
 pub fn execute_updates_with_reporter(
     apps: &[AppRecord],
     install_home: &Path,
     reporter: &mut impl ProgressReporter,
+) -> Result<UpdateExecutionResult, ExecuteUpdatesError> {
+    execute_updates_with_reporter_and_policy(
+        apps,
+        install_home,
+        reporter,
+        AddSecurityPolicy::default(),
+    )
+}
+
+pub fn execute_updates_with_reporter_and_policy(
+    apps: &[AppRecord],
+    install_home: &Path,
+    reporter: &mut impl ProgressReporter,
+    policy: AddSecurityPolicy,
 ) -> Result<UpdateExecutionResult, ExecuteUpdatesError> {
     reporter.report(&OperationEvent::Started {
         kind: OperationKind::UpdateBatch,
@@ -43,7 +64,7 @@ pub fn execute_updates_with_reporter(
             kind: OperationKind::UpdateItem,
             label: app.stable_id.clone(),
         });
-        match execute_update(app, install_home, reporter) {
+        match execute_update(app, install_home, reporter, policy) {
             Ok(updated) => {
                 let warnings = updated
                     .warnings
@@ -166,6 +187,7 @@ fn execute_update(
     app: &AppRecord,
     install_home: &Path,
     reporter: &mut impl ProgressReporter,
+    policy: AddSecurityPolicy,
 ) -> Result<crate::app::add::InstalledApp, String> {
     reporter.report(&OperationEvent::StageChanged {
         stage: OperationStage::ResolveQuery,
@@ -184,14 +206,17 @@ fn execute_update(
         .as_ref()
         .map(|install| install.scope)
         .unwrap_or(InstallScope::User);
-    let plan = build_add_plan(&query).map_err(|error| {
-        let reason = format!("failed to build update plan: {error:?}");
-        reporter.report(&OperationEvent::Failed {
-            stage: OperationStage::ResolveQuery,
-            reason: reason.clone(),
-        });
-        reason
-    })?;
+    let transport = crate::source::github::default_transport();
+    let plan =
+        build_add_plan_with_reporter_and_policy(&query, transport.as_ref(), reporter, policy)
+            .map_err(|error| {
+                let reason = format!("failed to build update plan: {error:?}");
+                reporter.report(&OperationEvent::Failed {
+                    stage: OperationStage::ResolveQuery,
+                    reason: reason.clone(),
+                });
+                reason
+            })?;
 
     let rollback = stage_existing_installation(app, install_home).inspect_err(|reason| {
         reporter.report(&OperationEvent::Failed {

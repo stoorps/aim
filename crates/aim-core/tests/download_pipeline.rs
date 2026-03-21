@@ -57,6 +57,7 @@ fn install_commits_from_staged_payload_path() {
         staged_payload_path: &staged_path,
         final_payload_path: &final_payload_path,
         trusted_checksum: None,
+        weak_checksum_md5: None,
         desktop: None,
         helpers: DesktopHelpers::default(),
     })

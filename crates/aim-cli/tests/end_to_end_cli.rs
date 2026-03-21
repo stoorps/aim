@@ -340,6 +340,74 @@ fn cli_add_installs_sourceforge_latest_download_with_truthful_origin() {
 }
 
 #[test]
+fn cli_rejects_insecure_http_direct_urls_by_default() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("http://example.com/team-app.AppImage")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .failure()
+        .stderr(contains("insecure HTTP sources are disabled"));
+
+    assert!(!registry_path.exists());
+}
+
+#[test]
+fn cli_allows_insecure_http_direct_urls_when_config_enables_it() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "allow_http = true\n").unwrap();
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("http://example.com/team-app.AppImage")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env("AIM_CONFIG_PATH", &config_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Installed"))
+        .stdout(contains(
+            "Source: direct-url http://example.com/team-app.AppImage",
+        ));
+}
+
+#[test]
+fn cli_rejects_insecure_appimagehub_download_urls_even_when_http_is_allowed() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "allow_http = true\n").unwrap();
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("appimagehub/2338455")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env("AIM_CONFIG_PATH", &config_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .env("AIM_APPIMAGEHUB_FIXTURE_INSECURE_HTTP", "1")
+        .assert()
+        .failure()
+        .stderr(contains("insecure appimagehub download url"));
+}
+
+#[test]
+fn cli_rejects_appimagehub_install_when_md5_does_not_match() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("appimagehub/2338455")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .env("AIM_APPIMAGEHUB_FIXTURE_BAD_MD5", "1")
+        .assert()
+        .failure()
+        .stderr(contains("weak provider checksum did not match"));
+}
+
+#[test]
 fn cli_add_installs_sourceforge_release_folder_with_truthful_origin() {
     let dir = tempdir().unwrap();
     let registry_path = dir.path().join("registry.toml");

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize)]
 pub struct CliConfig {
     #[serde(default)]
+    pub allow_http: bool,
+    #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
     pub theme: ThemeConfig,

@@ -236,6 +236,7 @@ impl From<BuildAddPlanError> for ShowResultError {
     fn from(value: BuildAddPlanError) -> Self {
         match value {
             BuildAddPlanError::Query(_) => Self::UnsupportedQuery,
+            BuildAddPlanError::InsecureHttpSource { .. } => Self::InsecureHttpSource,
             BuildAddPlanError::NoInstallableArtifact { source } => Self::NoInstallableArtifact {
                 source: project_source_summary(&source),
             },

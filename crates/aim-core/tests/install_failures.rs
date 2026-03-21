@@ -32,6 +32,7 @@ fn integration_failure_removes_new_payload_and_generated_files() {
         staged_payload_path: &staged_path,
         final_payload_path: &final_payload_path,
         trusted_checksum: None,
+        weak_checksum_md5: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_entry_path,
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",

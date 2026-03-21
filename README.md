@@ -49,6 +49,20 @@ By default `aim` auto-detects whether to use user or system scope. Override that
 - `--user`
 - `--system`
 
+## Config
+
+Runtime config is loaded from `~/.config/aim/config.toml` or `$XDG_CONFIG_HOME/aim/config.toml`.
+
+Example:
+
+```toml
+allow_http = true
+```
+
+- `allow_http = false` is the default
+- `allow_http` only permits user-supplied `http://` inputs such as direct URL installs or updates from previously installed direct HTTP origins
+- provider-resolved downloads such as AppImageHub artifacts remain HTTPS-only even when `allow_http = true`
+
 ## Current Flow Shape
 
 - `aim <QUERY>` installs direct provider matches when available, otherwise falls back to search results, shows live progress on stderr, prints an `Installation Summary` on stdout for installs, and renders an `Installation Review` when tracking needs confirmation

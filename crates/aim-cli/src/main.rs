@@ -20,7 +20,7 @@ fn main() {
 
     let cli = aim_cli::parse();
     let mut reporter = aim_cli::ui::progress::TerminalProgressReporter::stderr();
-    match aim_cli::dispatch_with_reporter(cli, &mut reporter) {
+    match aim_cli::dispatch_with_reporter_and_config(cli, &config, &mut reporter) {
         Ok(result) => {
             let output = aim_cli::render_with_config(&result, &config);
             if !output.is_empty() {

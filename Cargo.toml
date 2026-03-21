@@ -23,6 +23,7 @@ crossterm = "0.28.1"
 fs2 = "0.4.3"
 indicatif = "0.17.11"
 libc = "0.2.171"
+md5 = "0.7.0"
 ratatui = "0.29.0"
 reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 quick-xml = { version = "0.37.5", features = ["serialize"] }

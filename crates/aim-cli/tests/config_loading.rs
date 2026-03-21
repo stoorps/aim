@@ -10,6 +10,7 @@ fn missing_config_file_returns_defaults() {
 
     assert_eq!(config, CliConfig::default());
     assert_eq!(config.search, SearchConfig::default());
+    assert!(!config.allow_http);
     assert!(config.search.bottom_to_top);
     assert!(!config.search.skip_confirmation);
     assert_eq!(config.theme.accent, "#b388ff");
@@ -23,7 +24,7 @@ fn search_section_overrides_defaults() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "[search]\nbottom_to_top = false\nskip_confirmation = true\n\n[theme]\naccent = \"#9f6bff\"\naccent_secondary = \"#efe7ff\"\ndim = \"#6b6480\"\n",
+        "allow_http = true\n\n[search]\nbottom_to_top = false\nskip_confirmation = true\n\n[theme]\naccent = \"#9f6bff\"\naccent_secondary = \"#efe7ff\"\ndim = \"#6b6480\"\n",
     )
     .unwrap();
 
@@ -32,6 +33,7 @@ fn search_section_overrides_defaults() {
     assert_eq!(
         config,
         CliConfig {
+            allow_http: true,
             search: SearchConfig {
                 bottom_to_top: false,
                 skip_confirmation: true,

@@ -94,6 +94,7 @@ pub enum ShowResultError {
         matches: Vec<String>,
     },
     UnsupportedQuery,
+    InsecureHttpSource,
     NoInstallableArtifact {
         source: SourceSummary,
     },

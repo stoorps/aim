@@ -71,6 +71,7 @@ pub fn select_artifact(
             .unwrap_or_else(|| "latest".to_owned()),
         arch: Some("x86_64".to_owned()),
         trusted_checksum: hints.and_then(|value| value.checksum.clone()),
+        weak_checksum_md5: None,
         selection_reason: selection_reason.to_owned(),
     }
 }

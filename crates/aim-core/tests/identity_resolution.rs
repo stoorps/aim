@@ -29,3 +29,19 @@ fn explicit_id_is_treated_as_confident() {
     assert_eq!(identity.display_name, "Bat");
     assert_eq!(identity.confidence, IdentityConfidence::Confident);
 }
+
+#[test]
+fn identifiers_containing_dot_dot_are_rejected() {
+    let error = resolve_identity(
+        Some("Bat"),
+        Some(".."),
+        Some("https://example.com/app.AppImage"),
+        IdentityFallback::AllowRawUrl,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        aim_core::app::identity::ResolveIdentityError::InvalidStableId
+    );
+}

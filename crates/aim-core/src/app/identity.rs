@@ -14,11 +14,11 @@ pub fn resolve_identity(
     fallback: IdentityFallback,
 ) -> Result<AppIdentity, ResolveIdentityError> {
     if let Some(explicit_id) = explicit_id.filter(|value| !value.trim().is_empty()) {
-        let stable_id = normalize_identifier(explicit_id);
+        let stable_id = normalize_identifier(explicit_id)?;
         let display_name = explicit_name
             .filter(|value| !value.trim().is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| explicit_id.to_owned());
+            .map(sanitize_display_name)
+            .unwrap_or_else(|| sanitize_display_name(explicit_id));
 
         return Ok(AppIdentity {
             stable_id,
@@ -29,8 +29,8 @@ pub fn resolve_identity(
 
     if let Some(explicit_name) = explicit_name.filter(|value| !value.trim().is_empty()) {
         return Ok(AppIdentity {
-            stable_id: normalize_identifier(explicit_name),
-            display_name: explicit_name.to_owned(),
+            stable_id: normalize_identifier(explicit_name)?,
+            display_name: sanitize_display_name(explicit_name),
             confidence: IdentityConfidence::NeedsConfirmation,
         });
     }
@@ -41,8 +41,8 @@ pub fn resolve_identity(
     {
         let display_name = repo.split('/').next_back().unwrap_or(&repo).to_owned();
         return Ok(AppIdentity {
-            stable_id: normalize_identifier(&repo),
-            display_name,
+            stable_id: normalize_identifier(&repo)?,
+            display_name: sanitize_display_name(&display_name),
             confidence: IdentityConfidence::Confident,
         });
     }
@@ -51,8 +51,8 @@ pub fn resolve_identity(
         && fallback == IdentityFallback::AllowRawUrl
     {
         return Ok(AppIdentity {
-            stable_id: normalize_url_identifier(source_url),
-            display_name: source_url.to_owned(),
+            stable_id: normalize_url_identifier(source_url)?,
+            display_name: sanitize_display_name(source_url),
             confidence: IdentityConfidence::RawUrlFallback,
         });
     }
@@ -63,10 +63,11 @@ pub fn resolve_identity(
 #[derive(Debug, Eq, PartialEq)]
 pub enum ResolveIdentityError {
     Unresolved,
+    InvalidStableId,
 }
 
-fn normalize_identifier(value: &str) -> String {
-    value
+fn normalize_identifier(value: &str) -> Result<String, ResolveIdentityError> {
+    let normalized = value
         .trim()
         .chars()
         .map(|ch| match ch {
@@ -76,15 +77,41 @@ fn normalize_identifier(value: &str) -> String {
         })
         .collect::<String>()
         .trim_matches('-')
-        .to_owned()
+        .to_owned();
+
+    if normalized.is_empty() || normalized.contains("..") {
+        return Err(ResolveIdentityError::InvalidStableId);
+    }
+
+    Ok(normalized)
 }
 
-fn normalize_url_identifier(url: &str) -> String {
+fn normalize_url_identifier(url: &str) -> Result<String, ResolveIdentityError> {
     let trimmed = url
         .trim()
         .trim_start_matches("https://")
         .trim_start_matches("http://")
         .trim_start_matches("file://");
 
-    format!("url-{}", normalize_identifier(trimmed))
+    Ok(format!("url-{}", normalize_identifier(trimmed)?))
+}
+
+fn sanitize_display_name(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '\n' | '\r') || ch.is_control() {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if sanitized.is_empty() {
+        "app".to_owned()
+    } else {
+        sanitized
+    }
 }
