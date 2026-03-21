@@ -203,6 +203,12 @@ fn execute_update(
 }
 
 fn update_query(app: &AppRecord) -> Option<String> {
+    if let Some(source) = app.source.as_ref()
+        && source.kind == SourceKind::SourceForge
+    {
+        return Some(source.locator.clone());
+    }
+
     app.source_input.clone().or_else(|| {
         app.source.as_ref().map(|source| {
             source

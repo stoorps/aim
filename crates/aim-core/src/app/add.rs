@@ -215,7 +215,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
             let strategy = UpdateStrategy {
                 preferred: crate::domain::update::ChannelPreference {
                     kind: crate::domain::update::UpdateChannelKind::DirectAsset,
-                    locator: artifact_url,
+                    locator: resolution.source.locator.clone(),
                     reason: "provider-release".to_owned(),
                 },
                 alternates: Vec::new(),

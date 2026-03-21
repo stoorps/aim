@@ -207,8 +207,8 @@ Current implementation status in this branch:
 - Phase 1 is complete. The classifier-versus-adapter boundary is now documented explicitly in this addendum.
 - Phase 2 is complete. `GitLabCandidate` and `SourceForgeCandidate` now exist in the source model and are produced by classification for the narrow ambiguity cases under test.
 - Phase 3 is complete for the first GitLab slice. `https://gitlab.com/<group>/<subgroup>/releases/<repo>` remains a classified candidate, but the GitLab adapter now resolves it as repository semantics with a derived canonical locator.
-- Phase 4 is complete for two SourceForge slices. `https://sourceforge.net/projects/<project>/files/releases/stable/download` remains a classified candidate and now resolves as a provider-owned latest-download source. `https://sourceforge.net/projects/<project>/files/releases/v*/download` is now preserved as a provider-owned candidate and surfaces as `NoInstallableArtifact`.
-- Phase 5 is partially complete. Provider-owned ambiguous inputs now distinguish unsupported-query failures from no-artifact outcomes, and both GitLab and SourceForge have at least one adapter-owned positive resolution path.
+- Phase 4 is complete for the current SourceForge slices. `https://sourceforge.net/projects/<project>/files/releases/stable/download` remains a classified candidate and resolves as a provider-owned install source. The broader single-segment family `https://sourceforge.net/projects/<project>/files/releases/<release-folder>/download` is also preserved as a provider-owned candidate and resolves through installation and update. When the `<release-folder>` segment is clearly an artifact filename, provider resolution canonicalizes the stored SourceForge source to `https://sourceforge.net/projects/<project>/files/releases` while preserving the original typed download URL as the first-install artifact.
+- Phase 5 is partially complete. Provider-owned ambiguous inputs now distinguish unsupported-query failures from no-artifact outcomes, and both GitLab and SourceForge have adapter-owned positive resolution paths for the accepted provider families.
 
 The current intended classifier contract is:
 
@@ -221,7 +221,7 @@ That contract is intentionally stricter than heuristic best-effort classificatio
 What remains intentionally out of scope for this slice:
 
 - additional GitLab candidate families beyond the first repository-style deep path
-- broader SourceForge folder and version-path families beyond the `releases/stable/download` and narrow `releases/v*/download` rules
+- broader SourceForge folder families beyond the current single-segment `releases/<release-folder>/download` support contract and the `files/releases` provider root
 - any network-backed provider discovery in classification
 
 ## Success Criteria

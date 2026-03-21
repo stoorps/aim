@@ -388,6 +388,28 @@ fn sourceforge_candidate_builds_concrete_install_candidate() {
 }
 
 #[test]
+fn sourceforge_release_folder_builds_concrete_install_candidate() {
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://sourceforge.net/projects/team-app/files/releases/beta/download";
+
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::SourceForge);
+    assert_eq!(plan.resolution.source.locator, query);
+    assert_eq!(
+        plan.resolution.source.normalized_kind,
+        NormalizedSourceKind::SourceForge
+    );
+    assert!(plan.resolution.source.tracks_latest);
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(plan.selected_artifact.url, query);
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+    assert_eq!(plan.update_strategy.preferred.locator, query);
+    assert_eq!(plan.update_strategy.preferred.reason, "provider-release");
+}
+
+#[test]
 fn sourceforge_latest_download_builds_concrete_install_candidate() {
     let mut reporter = |_event: &OperationEvent| {};
     let query = "https://sourceforge.net/projects/team-app/files/latest/download";
@@ -425,6 +447,107 @@ fn sourceforge_latest_download_install_preserves_truthful_origin() {
     );
     assert_eq!(installed.source.kind, SourceKind::SourceForge);
     assert_eq!(installed.source.locator, query);
+    assert_eq!(
+        installed.source.canonical_locator.as_deref(),
+        Some("team-app")
+    );
+    assert_eq!(installed.selected_artifact.url, query);
+}
+
+#[test]
+fn sourceforge_release_folder_install_preserves_truthful_origin() {
+    let root = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://sourceforge.net/projects/team-app/files/releases/beta/download";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    let installed =
+        install_app_with_reporter(query, &plan, root.path(), InstallScope::User, &mut reporter)
+            .unwrap();
+
+    assert_eq!(installed.record.source_input.as_deref(), Some(query));
+    assert_eq!(
+        installed.record.installed_version.as_deref(),
+        Some("latest")
+    );
+    assert_eq!(installed.source.kind, SourceKind::SourceForge);
+    assert_eq!(installed.source.locator, query);
+    assert_eq!(
+        installed.source.canonical_locator.as_deref(),
+        Some("team-app")
+    );
+    assert_eq!(
+        installed.source.normalized_kind,
+        NormalizedSourceKind::SourceForge
+    );
+    assert_eq!(installed.selected_artifact.url, query);
+}
+
+#[test]
+fn sourceforge_file_like_release_download_uses_releases_root_for_source_and_original_url_for_artifact()
+ {
+    let mut reporter = |_event: &OperationEvent| {};
+    let query =
+        "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download";
+
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::SourceForge);
+    assert_eq!(
+        plan.resolution.source.locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(
+        plan.resolution.source.requested_asset_name.as_deref(),
+        Some("team-app-1.0.0.AppImage")
+    );
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(plan.selected_artifact.url, query);
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+    assert_eq!(
+        plan.update_strategy.preferred.locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(plan.update_strategy.preferred.reason, "provider-release");
+}
+
+#[test]
+fn sourceforge_file_like_release_download_install_preserves_input_but_stores_releases_root() {
+    let root = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |_event: &OperationEvent| {};
+    let query =
+        "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    let installed =
+        install_app_with_reporter(query, &plan, root.path(), InstallScope::User, &mut reporter)
+            .unwrap();
+
+    assert_eq!(installed.record.source_input.as_deref(), Some(query));
+    assert_eq!(
+        installed.record.installed_version.as_deref(),
+        Some("latest")
+    );
+    assert_eq!(installed.source.kind, SourceKind::SourceForge);
+    assert_eq!(
+        installed.source.locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(
+        installed.source.requested_asset_name.as_deref(),
+        Some("team-app-1.0.0.AppImage")
+    );
     assert_eq!(
         installed.source.canonical_locator.as_deref(),
         Some("team-app")

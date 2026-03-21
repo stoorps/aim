@@ -67,26 +67,3 @@ fn supported_sourceforge_project_without_latest_download_reports_no_installable_
         other => panic!("expected no-installable-artifact error, got {other:?}"),
     }
 }
-
-#[test]
-fn supported_sourceforge_version_folder_candidate_without_installable_artifact_reports_no_installable_artifact()
- {
-    let error = build_add_plan_with(
-        "https://sourceforge.net/projects/team-app/files/releases/v1-0/download",
-        &FixtureGitHubTransport,
-    )
-    .unwrap_err();
-
-    match error {
-        BuildAddPlanError::NoInstallableArtifact { source } => {
-            assert_eq!(source.kind, SourceKind::SourceForge);
-            assert_eq!(
-                source.locator,
-                "https://sourceforge.net/projects/team-app/files/releases/v1-0/download"
-            );
-            assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
-            assert_eq!(source.normalized_kind.as_str(), "sourceforge-candidate");
-        }
-        other => panic!("expected no-installable-artifact error, got {other:?}"),
-    }
-}

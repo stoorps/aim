@@ -171,19 +171,21 @@ fn classify_sourceforge_http(query: &str) -> Option<Result<ClassifiedInput, Clas
     };
 
     let is_project_url = parts.len() == 1;
+    let is_releases_root_url = parts.len() == 3 && parts[1] == "files" && parts[2] == "releases";
     let is_latest_download_url =
         parts.len() == 4 && parts[1] == "files" && parts[2] == "latest" && parts[3] == "download";
     let is_root_file_download_url = parts.len() == 4
         && parts[1] == "files"
         && parts[3] == "download"
         && !matches!(parts[2], "latest" | "releases");
-    let is_nested_file_download_url = parts.len() > 4
+    let is_nested_file_download_url = parts.len() > 5
         && parts[1] == "files"
         && parts.last() == Some(&"download")
         && parts
             .get(parts.len().saturating_sub(2))
             .is_some_and(|segment| segment.contains('.'));
     let is_ambiguous_candidate = is_ambiguous_sourceforge_candidate_path(&parts);
+    let requested_asset_name = sourceforge_requested_asset_name(&parts);
     let is_concrete_download_url =
         !is_latest_download_url && (is_root_file_download_url || is_nested_file_download_url);
     if is_concrete_download_url {
@@ -198,7 +200,11 @@ fn classify_sourceforge_http(query: &str) -> Option<Result<ClassifiedInput, Clas
             tracks_latest: false,
         }));
     }
-    if !is_project_url && !is_latest_download_url && !is_ambiguous_candidate {
+    if !is_project_url
+        && !is_releases_root_url
+        && !is_latest_download_url
+        && !is_ambiguous_candidate
+    {
         return Some(Err(ClassifyInputError::Unsupported));
     }
 
@@ -213,8 +219,8 @@ fn classify_sourceforge_http(query: &str) -> Option<Result<ClassifiedInput, Clas
         locator: query.to_owned(),
         canonical_locator: Some((*project).to_owned()),
         requested_tag: None,
-        requested_asset_name: None,
-        tracks_latest: is_project_url || is_latest_download_url,
+        requested_asset_name,
+        tracks_latest: is_project_url || is_releases_root_url || is_latest_download_url,
     }))
 }
 
@@ -271,15 +277,45 @@ fn is_ambiguous_gitlab_candidate_path(parts: &[&str]) -> bool {
 }
 
 fn is_ambiguous_sourceforge_candidate_path(parts: &[&str]) -> bool {
-    parts.len() == 5
-        && parts[1] == "files"
-        && parts[2] == "releases"
-        && (parts[3] == "stable" || is_version_like_sourceforge_folder(parts[3]))
-        && parts[4] == "download"
+    parts.len() == 5 && parts[1] == "files" && parts[2] == "releases" && parts[4] == "download"
 }
 
-fn is_version_like_sourceforge_folder(segment: &str) -> bool {
-    segment.starts_with('v') && segment.chars().any(|character| character.is_ascii_digit())
+fn sourceforge_requested_asset_name(parts: &[&str]) -> Option<String> {
+    if parts.len() == 5
+        && parts[1] == "files"
+        && parts[2] == "releases"
+        && parts[4] == "download"
+        && is_sourceforge_artifact_name(parts[3])
+    {
+        return Some(parts[3].to_owned());
+    }
+
+    None
+}
+
+fn is_sourceforge_artifact_name(segment: &str) -> bool {
+    let lower = segment.to_ascii_lowercase();
+
+    [
+        ".appimage",
+        ".tar.gz",
+        ".tar.xz",
+        ".tar.bz2",
+        ".zip",
+        ".deb",
+        ".rpm",
+        ".exe",
+        ".msi",
+        ".dmg",
+        ".pkg",
+        ".apk",
+        ".tgz",
+        ".whl",
+        ".jar",
+        ".nupkg",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
 }
 
 fn classify_github_http(query: &str) -> Option<ClassifiedInput> {

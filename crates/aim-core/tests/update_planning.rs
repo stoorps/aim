@@ -238,3 +238,132 @@ fn update_execution_rebuilds_gitlab_source_without_rewriting_origin() {
         Some("example/team-app")
     );
 }
+
+#[test]
+fn update_execution_rebuilds_sourceforge_release_folder_without_rewriting_origin() {
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let previous = AppRecord {
+        stable_id: "team-app".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some(
+            "https://sourceforge.net/projects/team-app/files/releases/beta/download".to_owned(),
+        ),
+        source: Some(SourceRef {
+            kind: SourceKind::SourceForge,
+            locator: "https://sourceforge.net/projects/team-app/files/releases/beta/download"
+                .to_owned(),
+            input_kind: SourceInputKind::SourceForgeUrl,
+            normalized_kind: NormalizedSourceKind::SourceForge,
+            canonical_locator: Some("team-app".to_owned()),
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: true,
+        }),
+        installed_version: Some("latest".to_owned()),
+        update_strategy: Some(UpdateStrategy {
+            preferred: ChannelPreference {
+                kind: UpdateChannelKind::DirectAsset,
+                locator: "https://sourceforge.net/projects/team-app/files/releases/beta/download"
+                    .to_owned(),
+                reason: "provider-release".to_owned(),
+            },
+            alternates: Vec::new(),
+        }),
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.updated_count(), 1);
+    assert_eq!(result.failed_count(), 0);
+    assert_eq!(
+        result.apps[0].source.as_ref().unwrap().kind,
+        SourceKind::SourceForge
+    );
+    assert_eq!(
+        result.apps[0].source.as_ref().unwrap().locator,
+        "https://sourceforge.net/projects/team-app/files/releases/beta/download"
+    );
+    assert_eq!(
+        result.apps[0]
+            .source
+            .as_ref()
+            .unwrap()
+            .canonical_locator
+            .as_deref(),
+        Some("team-app")
+    );
+}
+
+#[test]
+fn update_execution_uses_stored_sourceforge_releases_root_for_file_like_inputs() {
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let previous = AppRecord {
+        stable_id: "team-app".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some(
+            "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download"
+                .to_owned(),
+        ),
+        source: Some(SourceRef {
+            kind: SourceKind::SourceForge,
+            locator: "https://sourceforge.net/projects/team-app/files/releases".to_owned(),
+            input_kind: SourceInputKind::SourceForgeUrl,
+            normalized_kind: NormalizedSourceKind::SourceForge,
+            canonical_locator: Some("team-app".to_owned()),
+            requested_tag: None,
+            requested_asset_name: Some("team-app-1.0.0.AppImage".to_owned()),
+            tracks_latest: true,
+        }),
+        installed_version: Some("latest".to_owned()),
+        update_strategy: Some(UpdateStrategy {
+            preferred: ChannelPreference {
+                kind: UpdateChannelKind::DirectAsset,
+                locator: "https://sourceforge.net/projects/team-app/files/releases".to_owned(),
+                reason: "provider-release".to_owned(),
+            },
+            alternates: Vec::new(),
+        }),
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.updated_count(), 1);
+    assert_eq!(result.failed_count(), 0);
+    assert_eq!(
+        result.apps[0].source.as_ref().unwrap().locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(
+        result.apps[0]
+            .source
+            .as_ref()
+            .unwrap()
+            .requested_asset_name
+            .as_deref(),
+        None
+    );
+}

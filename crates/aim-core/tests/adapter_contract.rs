@@ -233,7 +233,7 @@ fn sourceforge_candidate_sources_can_resolve_to_latest_download() {
 }
 
 #[test]
-fn sourceforge_version_folder_candidates_can_return_no_installable_artifact() {
+fn sourceforge_version_folder_candidates_can_resolve_to_latest_download() {
     let adapter: &dyn SourceAdapter = &SourceForgeAdapter;
 
     let result = adapter
@@ -247,10 +247,112 @@ fn sourceforge_version_folder_candidates_can_return_no_installable_artifact() {
     );
 
     let resolution = adapter.resolve_source(&result).unwrap();
-    assert_eq!(
+    assert!(matches!(
         resolution,
-        AdapterResolveOutcome::NoInstallableArtifact { source: result }
+        AdapterResolveOutcome::Resolved(AdapterResolution {
+            source,
+            release: ResolvedRelease { version, .. },
+        }) if source.kind == SourceKind::SourceForge
+            && source.locator
+                == "https://sourceforge.net/projects/team-app/files/releases/v1-0/download"
+            && source.normalized_kind == NormalizedSourceKind::SourceForge
+            && source.tracks_latest
+            && version == "latest"
+    ));
+}
+
+#[test]
+fn sourceforge_prerelease_folder_candidates_can_resolve_to_latest_download() {
+    let adapter: &dyn SourceAdapter = &SourceForgeAdapter;
+
+    let result = adapter
+        .normalize("https://sourceforge.net/projects/team-app/files/releases/beta/download")
+        .unwrap();
+
+    assert_eq!(result.kind, SourceKind::SourceForge);
+    assert_eq!(
+        result.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
     );
+
+    let resolution = adapter.resolve_source(&result).unwrap();
+    assert!(matches!(
+        resolution,
+        AdapterResolveOutcome::Resolved(AdapterResolution {
+            source,
+            release: ResolvedRelease { version, .. },
+        }) if source.kind == SourceKind::SourceForge
+            && source.locator
+                == "https://sourceforge.net/projects/team-app/files/releases/beta/download"
+            && source.normalized_kind == NormalizedSourceKind::SourceForge
+            && source.tracks_latest
+            && version == "latest"
+    ));
+}
+
+#[test]
+fn sourceforge_dotted_release_folder_candidates_can_resolve_to_latest_download() {
+    let adapter: &dyn SourceAdapter = &SourceForgeAdapter;
+
+    let result = adapter
+        .normalize("https://sourceforge.net/projects/team-app/files/releases/2026.03/download")
+        .unwrap();
+
+    assert_eq!(result.kind, SourceKind::SourceForge);
+    assert_eq!(
+        result.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+
+    let resolution = adapter.resolve_source(&result).unwrap();
+    assert!(matches!(
+        resolution,
+        AdapterResolveOutcome::Resolved(AdapterResolution {
+            source,
+            release: ResolvedRelease { version, .. },
+        }) if source.kind == SourceKind::SourceForge
+            && source.locator
+                == "https://sourceforge.net/projects/team-app/files/releases/2026.03/download"
+            && source.normalized_kind == NormalizedSourceKind::SourceForge
+            && source.tracks_latest
+            && version == "latest"
+    ));
+}
+
+#[test]
+fn sourceforge_file_like_release_candidates_resolve_to_releases_root() {
+    let adapter: &dyn SourceAdapter = &SourceForgeAdapter;
+
+    let result = adapter
+        .normalize(
+            "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download",
+        )
+        .unwrap();
+
+    assert_eq!(result.kind, SourceKind::SourceForge);
+    assert_eq!(
+        result.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(
+        result.requested_asset_name.as_deref(),
+        Some("team-app-1.0.0.AppImage")
+    );
+
+    let resolution = adapter.resolve_source(&result).unwrap();
+    assert!(matches!(
+        resolution,
+        AdapterResolveOutcome::Resolved(AdapterResolution {
+            source,
+            release: ResolvedRelease { version, .. },
+        }) if source.kind == SourceKind::SourceForge
+            && source.locator
+                == "https://sourceforge.net/projects/team-app/files/releases"
+            && source.normalized_kind == NormalizedSourceKind::SourceForge
+            && source.tracks_latest
+            && source.requested_asset_name.as_deref() == Some("team-app-1.0.0.AppImage")
+            && version == "latest"
+    ));
 }
 
 #[test]

@@ -128,15 +128,39 @@ fn preserves_direct_url_classification() {
 }
 
 #[test]
-fn preserves_sourceforge_download_url_as_direct_url() {
+fn classifies_single_segment_sourceforge_release_download_as_candidate() {
     let source = resolve_query(
         "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download",
     )
     .unwrap();
 
-    assert_eq!(source.kind, SourceKind::DirectUrl);
-    assert_eq!(source.input_kind, SourceInputKind::DirectUrl);
-    assert_eq!(source.normalized_kind, NormalizedSourceKind::DirectUrl);
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(
+        source.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert_eq!(
+        source.requested_asset_name.as_deref(),
+        Some("team-app-1.0.0.AppImage")
+    );
+    assert!(!source.tracks_latest);
+}
+
+#[test]
+fn classifies_sourceforge_releases_root_as_provider_source() {
+    let source = resolve_query("https://sourceforge.net/projects/team-app/files/releases").unwrap();
+
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(source.normalized_kind, NormalizedSourceKind::SourceForge);
+    assert_eq!(
+        source.locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert!(source.tracks_latest);
 }
 
 #[test]
@@ -162,15 +186,24 @@ fn preserves_sourceforge_extensionless_root_download_url_as_direct_url() {
 }
 
 #[test]
-fn preserves_sourceforge_download_url_with_query_as_direct_url() {
+fn classifies_single_segment_sourceforge_release_download_with_query_as_candidate() {
     let source = resolve_query(
         "https://sourceforge.net/projects/team-app/files/releases/team-app-1.0.0.AppImage/download?use_mirror=pilotfiber",
     )
     .unwrap();
 
-    assert_eq!(source.kind, SourceKind::DirectUrl);
-    assert_eq!(source.input_kind, SourceInputKind::DirectUrl);
-    assert_eq!(source.normalized_kind, NormalizedSourceKind::DirectUrl);
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(
+        source.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert_eq!(
+        source.requested_asset_name.as_deref(),
+        Some("team-app-1.0.0.AppImage")
+    );
+    assert!(!source.tracks_latest);
 }
 
 #[test]
@@ -253,11 +286,18 @@ fn rejects_unsupported_sourceforge_url_shape() {
 }
 
 #[test]
-fn rejects_unsupported_sourceforge_files_shape() {
-    let error =
-        resolve_query("https://sourceforge.net/projects/team-app/files/releases").unwrap_err();
+fn classifies_sourceforge_files_releases_shape_as_provider_source() {
+    let source = resolve_query("https://sourceforge.net/projects/team-app/files/releases").unwrap();
 
-    assert_eq!(error, aim_core::app::query::ResolveQueryError::Unsupported);
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(source.normalized_kind, NormalizedSourceKind::SourceForge);
+    assert_eq!(
+        source.locator,
+        "https://sourceforge.net/projects/team-app/files/releases"
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert!(source.tracks_latest);
 }
 
 #[test]
@@ -285,18 +325,57 @@ fn classifies_ambiguous_sourceforge_nested_folder_download_as_candidate() {
 }
 
 #[test]
-fn rejects_unsupported_sourceforge_nested_extensionless_download_shape() {
-    let error =
+fn classifies_extensionless_sourceforge_release_folder_download_as_candidate() {
+    let source =
         resolve_query("https://sourceforge.net/projects/team-app/files/releases/team-app/download")
-            .unwrap_err();
+            .unwrap();
 
-    assert_eq!(error, aim_core::app::query::ResolveQueryError::Unsupported);
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(
+        source.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert!(!source.tracks_latest);
 }
 
 #[test]
 fn classifies_ambiguous_sourceforge_version_folder_download_as_candidate() {
     let source =
         resolve_query("https://sourceforge.net/projects/team-app/files/releases/v1-0/download")
+            .unwrap();
+
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(
+        source.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert!(!source.tracks_latest);
+}
+
+#[test]
+fn classifies_prerelease_named_sourceforge_release_folder_download_as_candidate() {
+    let source =
+        resolve_query("https://sourceforge.net/projects/team-app/files/releases/beta/download")
+            .unwrap();
+
+    assert_eq!(source.kind, SourceKind::SourceForge);
+    assert_eq!(source.input_kind, SourceInputKind::SourceForgeUrl);
+    assert_eq!(
+        source.normalized_kind,
+        NormalizedSourceKind::SourceForgeCandidate
+    );
+    assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+    assert!(!source.tracks_latest);
+}
+
+#[test]
+fn classifies_dotted_sourceforge_release_folder_download_as_candidate() {
+    let source =
+        resolve_query("https://sourceforge.net/projects/team-app/files/releases/2026.03/download")
             .unwrap();
 
     assert_eq!(source.kind, SourceKind::SourceForge);
