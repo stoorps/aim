@@ -27,5 +27,6 @@ pub enum Command {
     Remove { query: String },
     List,
     Search { query: String },
+    Show { value: Option<String> },
     Update,
 }

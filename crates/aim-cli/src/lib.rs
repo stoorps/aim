@@ -16,9 +16,11 @@ use aim_core::app::progress::{
 };
 use aim_core::app::remove::{RemovalResult, remove_registered_app_with_reporter};
 use aim_core::app::search::build_search_results;
+use aim_core::app::show::{build_installed_show_results, build_show_result};
 use aim_core::app::update::{build_update_plan, execute_updates_with_reporter};
 use aim_core::domain::app::AppRecord;
 use aim_core::domain::search::{SearchQuery, SearchResults};
+use aim_core::domain::show::{InstalledShow, ShowResult};
 use aim_core::domain::update::{UpdateExecutionResult, UpdatePlan};
 use aim_core::registry::store::RegistryStore;
 
@@ -76,6 +78,13 @@ pub fn dispatch_with_reporter(
                 });
                 Ok(DispatchResult::Search(results))
             }
+            cli::args::Command::Show { value } => match value {
+                Some(value) => {
+                    let result = build_show_result(&value, &apps)?;
+                    Ok(DispatchResult::Show(Box::new(result)))
+                }
+                None => Ok(DispatchResult::ShowAll(build_installed_show_results(&apps))),
+            },
             cli::args::Command::Update => {
                 let updates = execute_updates_with_reporter(&apps, &install_home, reporter)?;
                 reporter.report(&OperationEvent::StageChanged {
@@ -153,6 +162,8 @@ pub enum DispatchResult {
     PendingAdd(Box<AddPlan>),
     Removed(Box<RemovalResult>),
     Search(SearchResults),
+    Show(Box<ShowResult>),
+    ShowAll(Vec<InstalledShow>),
     UpdatePlan(UpdatePlan),
     Updated(Box<UpdateExecutionResult>),
     Noop,
@@ -166,6 +177,7 @@ pub enum DispatchError {
     RemovePlan(aim_core::app::remove::RemoveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
     Search(aim_core::app::search::SearchError),
+    Show(aim_core::domain::show::ShowResultError),
     UpdatePlan(aim_core::app::update::BuildUpdatePlanError),
     UpdateExecution(aim_core::app::update::ExecuteUpdatesError),
 }
@@ -206,6 +218,69 @@ impl std::fmt::Display for DispatchError {
             Self::RemovePlan(error) => write!(f, "remove failed: {error:?}"),
             Self::Registry(error) => write!(f, "registry failed: {error:?}"),
             Self::Search(error) => write!(f, "search failed: {error:?}"),
+            Self::Show(error) => match error {
+                aim_core::domain::show::ShowResultError::AmbiguousInstalledMatch {
+                    query,
+                    matches,
+                } => write!(
+                    f,
+                    "multiple installed apps match {query}: {}",
+                    matches.join(", ")
+                ),
+                aim_core::domain::show::ShowResultError::UnsupportedQuery => {
+                    write!(f, "unsupported source query")
+                }
+                aim_core::domain::show::ShowResultError::NoInstallableArtifact { source } => {
+                    write!(
+                        f,
+                        "no installable artifact found for {} {}",
+                        source.kind.as_str(),
+                        source.locator
+                    )
+                }
+                aim_core::domain::show::ShowResultError::AdapterResolutionFailed {
+                    adapter_id,
+                    kind,
+                    detail,
+                } => match kind {
+                    aim_core::domain::show::AdapterFailureKind::UnsupportedQuery => {
+                        write!(f, "{adapter_id} does not support this query")
+                    }
+                    aim_core::domain::show::AdapterFailureKind::UnsupportedSource => {
+                        write!(f, "{adapter_id} does not support this source")
+                    }
+                    aim_core::domain::show::AdapterFailureKind::ResolutionFailed => {
+                        if let Some(detail) = detail {
+                            write!(f, "{adapter_id} resolution failed: {detail}")
+                        } else {
+                            write!(f, "{adapter_id} resolution failed")
+                        }
+                    }
+                },
+                aim_core::domain::show::ShowResultError::GitHubDiscoveryFailed {
+                    kind,
+                    detail,
+                } => match (kind, detail) {
+                    (
+                        aim_core::domain::show::GitHubDiscoveryFailureKind::FixtureDocumentMissing,
+                        Some(detail),
+                    ) => write!(f, "github discovery failed: missing fixture document {detail}"),
+                    (
+                        aim_core::domain::show::GitHubDiscoveryFailureKind::NoReleases,
+                        Some(detail),
+                    ) => write!(f, "github discovery failed: no releases for {detail}"),
+                    (aim_core::domain::show::GitHubDiscoveryFailureKind::Unsupported, _) => {
+                        write!(f, "github discovery failed: unsupported source")
+                    }
+                    (aim_core::domain::show::GitHubDiscoveryFailureKind::Transport, _) => {
+                        write!(f, "github discovery failed: transport error")
+                    }
+                    _ => write!(f, "github discovery failed"),
+                },
+                aim_core::domain::show::ShowResultError::NoInstallableCandidates => {
+                    write!(f, "no installable candidates found")
+                }
+            },
             Self::UpdatePlan(error) => write!(f, "update planning failed: {error:?}"),
             Self::UpdateExecution(error) => write!(f, "update execution failed: {error:?}"),
         }
@@ -257,6 +332,12 @@ impl From<aim_core::registry::store::RegistryStoreError> for DispatchError {
 impl From<aim_core::app::search::SearchError> for DispatchError {
     fn from(value: aim_core::app::search::SearchError) -> Self {
         Self::Search(value)
+    }
+}
+
+impl From<aim_core::domain::show::ShowResultError> for DispatchError {
+    fn from(value: aim_core::domain::show::ShowResultError) -> Self {
+        Self::Show(value)
     }
 }
 

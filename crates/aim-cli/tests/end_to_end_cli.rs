@@ -530,3 +530,62 @@ fn update_command_emits_live_progress_to_stderr() {
         .stderr(contains("Resolving source: resolving pingdotgg-t3code"))
         .stderr(contains("Saving registry"));
 }
+
+#[test]
+fn update_command_reports_when_previous_installation_is_restored() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let install_home = dir.path().join("install-home");
+    let store = RegistryStore::new(registry_path.clone());
+    let stable_id = "url-example.com-downloads-team-app.appimage";
+    let payload_path = install_home.join(format!(".local/lib/aim/appimages/{stable_id}.AppImage"));
+
+    std::fs::create_dir_all(payload_path.parent().unwrap()).unwrap();
+    std::fs::write(&payload_path, b"previous-payload").unwrap();
+    std::fs::create_dir_all(install_home.join(".local/share")).unwrap();
+    std::fs::write(install_home.join(".local/share/applications"), b"blocker").unwrap();
+
+    store
+        .save(&Registry {
+            version: 1,
+            apps: vec![AppRecord {
+                stable_id: stable_id.to_owned(),
+                display_name: "https://example.com/downloads/team-app.AppImage".to_owned(),
+                source_input: Some("https://example.com/downloads/team-app.AppImage".to_owned()),
+                source: Some(aim_core::domain::source::SourceRef {
+                    kind: aim_core::domain::source::SourceKind::DirectUrl,
+                    locator: "https://example.com/downloads/team-app.AppImage".to_owned(),
+                    input_kind: aim_core::domain::source::SourceInputKind::DirectUrl,
+                    normalized_kind: aim_core::domain::source::NormalizedSourceKind::DirectUrl,
+                    canonical_locator: None,
+                    requested_tag: None,
+                    requested_asset_name: None,
+                    tracks_latest: false,
+                }),
+                installed_version: Some("unresolved".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: Some(InstallMetadata {
+                    scope: InstallScope::User,
+                    payload_path: Some(payload_path.display().to_string()),
+                    desktop_entry_path: None,
+                    icon_path: None,
+                }),
+            }],
+        })
+        .unwrap();
+
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("update")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .env("DISPLAY", ":99")
+        .env("XDG_CURRENT_DESKTOP", "test")
+        .assert()
+        .success()
+        .stdout(contains("Failed:"))
+        .stdout(contains("restored previous installation"));
+
+    assert_eq!(std::fs::read(&payload_path).unwrap(), b"previous-payload");
+}

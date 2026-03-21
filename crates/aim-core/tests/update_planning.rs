@@ -3,7 +3,12 @@ use aim_core::app::update::{build_update_plan, execute_updates, execute_updates_
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use aim_core::domain::source::{NormalizedSourceKind, SourceInputKind, SourceKind, SourceRef};
 use aim_core::domain::update::{ChannelPreference, UpdateChannelKind, UpdateStrategy};
+use aim_core::integration::paths::managed_appimage_path;
+use std::fs;
+use std::sync::Mutex;
 use tempfile::tempdir;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn empty_registry_produces_empty_plan() {
@@ -365,5 +370,114 @@ fn update_execution_uses_stored_sourceforge_releases_root_for_file_like_inputs()
             .requested_asset_name
             .as_deref(),
         None
+    );
+}
+
+#[test]
+fn failed_update_restores_previous_payload_contents() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+        std::env::set_var("DISPLAY", ":99");
+        std::env::set_var("XDG_CURRENT_DESKTOP", "test");
+    }
+
+    let stable_id = "url-example.com-downloads-team-app.appimage";
+    let payload_path = managed_appimage_path(install_home.path(), InstallScope::User, stable_id);
+    fs::create_dir_all(payload_path.parent().unwrap()).unwrap();
+    fs::write(&payload_path, b"previous-payload").unwrap();
+
+    let desktop_root = install_home.path().join(".local/share/applications");
+    fs::create_dir_all(desktop_root.parent().unwrap()).unwrap();
+    fs::write(&desktop_root, b"blocker").unwrap();
+
+    let previous = AppRecord {
+        stable_id: stable_id.to_owned(),
+        display_name: "https://example.com/downloads/team-app.AppImage".to_owned(),
+        source_input: Some("https://example.com/downloads/team-app.AppImage".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::DirectUrl,
+            locator: "https://example.com/downloads/team-app.AppImage".to_owned(),
+            input_kind: SourceInputKind::DirectUrl,
+            normalized_kind: NormalizedSourceKind::DirectUrl,
+            canonical_locator: None,
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: false,
+        }),
+        installed_version: Some("unresolved".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: Some(payload_path.display().to_string()),
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.failed_count(), 1);
+    assert_eq!(result.apps, vec![previous]);
+    assert_eq!(fs::read(&payload_path).unwrap(), b"previous-payload");
+}
+
+#[test]
+fn successful_update_removes_rollback_staging_directory() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    let stable_id = "url-example.com-downloads-team-app.appimage";
+    let payload_path = managed_appimage_path(install_home.path(), InstallScope::User, stable_id);
+    fs::create_dir_all(payload_path.parent().unwrap()).unwrap();
+    fs::write(&payload_path, b"previous-payload").unwrap();
+
+    let previous = AppRecord {
+        stable_id: stable_id.to_owned(),
+        display_name: "https://example.com/downloads/team-app.AppImage".to_owned(),
+        source_input: Some("https://example.com/downloads/team-app.AppImage".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::DirectUrl,
+            locator: "https://example.com/downloads/team-app.AppImage".to_owned(),
+            input_kind: SourceInputKind::DirectUrl,
+            normalized_kind: NormalizedSourceKind::DirectUrl,
+            canonical_locator: None,
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: false,
+        }),
+        installed_version: Some("unresolved".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: Some(payload_path.display().to_string()),
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.updated_count(), 1);
+    assert!(
+        !install_home
+            .path()
+            .join(".local/share/aim/rollback")
+            .exists()
     );
 }

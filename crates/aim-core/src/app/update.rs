@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::app::add::{build_add_plan, install_app_with_reporter};
 use crate::app::progress::{
@@ -190,16 +191,36 @@ fn execute_update(
         reason
     })?;
 
-    install_app_with_reporter(&query, &plan, install_home, requested_scope, reporter).map_err(
-        |error| {
-            let reason = format!("failed to install update: {error:?}");
+    let rollback = stage_existing_installation(app, install_home).inspect_err(|reason| {
+        reporter.report(&OperationEvent::Failed {
+            stage: OperationStage::StagePayload,
+            reason: reason.clone(),
+        });
+    })?;
+
+    install_app_with_reporter(&query, &plan, install_home, requested_scope, reporter)
+        .map_err(|error| {
+            let install_reason = format!("failed to install update: {error:?}");
+            let reason = match rollback.as_ref() {
+                Some(rollback) => match rollback.restore() {
+                    Ok(()) => format!("{install_reason}; restored previous installation"),
+                    Err(restore_reason) => {
+                        format!("{install_reason}; rollback restore failed: {restore_reason}")
+                    }
+                },
+                None => install_reason,
+            };
             reporter.report(&OperationEvent::Failed {
                 stage: OperationStage::Finalize,
                 reason: reason.clone(),
             });
             reason
-        },
-    )
+        })
+        .inspect(|_| {
+            if let Some(rollback) = rollback.as_ref() {
+                let _ = rollback.cleanup();
+            }
+        })
 }
 
 fn update_query(app: &AppRecord) -> Option<String> {
@@ -217,4 +238,119 @@ fn update_query(app: &AppRecord) -> Option<String> {
                 .unwrap_or_else(|| source.locator.clone())
         })
     })
+}
+
+fn stage_existing_installation(
+    app: &AppRecord,
+    install_home: &Path,
+) -> Result<Option<RollbackState>, String> {
+    let Some(install) = app.install.as_ref() else {
+        return Ok(None);
+    };
+
+    let tracked_paths = [
+        install.payload_path.as_deref(),
+        install.desktop_entry_path.as_deref(),
+        install.icon_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(PathBuf::from)
+    .filter(|path| path.exists())
+    .collect::<Vec<_>>();
+
+    if tracked_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let stage_dir = install_home
+        .join(".local/share/aim/rollback")
+        .join(&app.stable_id);
+    fs::create_dir_all(&stage_dir)
+        .map_err(|error| format!("failed to create rollback staging directory: {error}"))?;
+
+    let mut entries = Vec::with_capacity(tracked_paths.len());
+    for original_path in tracked_paths {
+        let backup_path = stage_dir.join(
+            original_path
+                .file_name()
+                .map(|name| name.to_os_string())
+                .unwrap_or_default(),
+        );
+        fs::rename(&original_path, &backup_path).map_err(|error| {
+            format!(
+                "failed to stage existing install file {}: {error}",
+                original_path.display()
+            )
+        })?;
+        entries.push(RollbackEntry {
+            original_path,
+            backup_path,
+        });
+    }
+
+    Ok(Some(RollbackState { stage_dir, entries }))
+}
+
+struct RollbackState {
+    stage_dir: PathBuf,
+    entries: Vec<RollbackEntry>,
+}
+
+impl RollbackState {
+    fn restore(&self) -> Result<(), String> {
+        for entry in &self.entries {
+            if let Some(parent) = entry.original_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to recreate rollback parent {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            fs::rename(&entry.backup_path, &entry.original_path).map_err(|error| {
+                format!(
+                    "failed to restore {}: {error}",
+                    entry.original_path.display()
+                )
+            })?;
+        }
+        self.cleanup()
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        if self.stage_dir.exists() {
+            fs::remove_dir_all(&self.stage_dir).map_err(|error| {
+                format!(
+                    "failed to remove rollback staging directory {}: {error}",
+                    self.stage_dir.display()
+                )
+            })?;
+        }
+        if let Some(parent) = self.stage_dir.parent()
+            && parent.exists()
+            && fs::read_dir(parent)
+                .map_err(|error| {
+                    format!(
+                        "failed to inspect rollback parent directory {}: {error}",
+                        parent.display()
+                    )
+                })?
+                .next()
+                .is_none()
+        {
+            fs::remove_dir(parent).map_err(|error| {
+                format!(
+                    "failed to remove rollback parent directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+struct RollbackEntry {
+    original_path: PathBuf,
+    backup_path: PathBuf,
 }

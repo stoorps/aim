@@ -8,10 +8,22 @@ use aim_core::app::list::ListRow;
 use aim_core::app::remove::{RemovalPlan, RemovalResult};
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use aim_core::domain::search::SearchInstallStatus;
+use aim_core::domain::show::{
+    InstalledShow, MetadataSummary, RemoteArtifactSummary, RemoteShow, ShowResult, SourceSummary,
+    TrackedInstallPaths, UpdateChannelSummary, UpdateStrategySummary,
+};
 use aim_core::domain::source::{NormalizedSourceKind, SourceInputKind, SourceKind, SourceRef};
 use aim_core::domain::update::ArtifactCandidate;
-use aim_core::domain::update::{ChannelPreference, PlannedUpdate, UpdateChannelKind, UpdatePlan};
+use aim_core::domain::update::{
+    ChannelPreference, ParsedMetadataKind, PlannedUpdate, UpdateChannelKind, UpdatePlan,
+};
 use aim_core::integration::install::InstallOutcome;
+
+fn muted_bold_label(title: &str) -> String {
+    let mut style = aim_cli::ui::theme::current_theme().muted;
+    style.bold = true;
+    aim_cli::ui::theme::apply_style_spec(&format!("{title}:"), &style)
+}
 
 #[test]
 fn update_summary_mentions_selected_count() {
@@ -254,4 +266,287 @@ fn search_confirmation_summary_lists_selected_rows() {
     assert!(output.contains("Confirm Search Selection"));
     assert!(output.contains("pingdotgg/t3code"));
     assert!(output.contains("sharkdp/bat"));
+}
+
+#[test]
+fn installed_show_summary_renders_source_scope_and_paths() {
+    let output = render_dispatch_result(&DispatchResult::Show(Box::new(ShowResult::Installed(
+        InstalledShow {
+            stable_id: "legacy-bat".to_owned(),
+            display_name: "Legacy Bat".to_owned(),
+            installed_version: Some("0.24.0".to_owned()),
+            source_input: Some("sharkdp/bat".to_owned()),
+            source: Some(SourceSummary {
+                kind: SourceKind::GitHub,
+                locator: "https://github.com/sharkdp/bat".to_owned(),
+                canonical_locator: Some("sharkdp/bat".to_owned()),
+            }),
+            install_scope: Some(InstallScope::User),
+            tracked_paths: TrackedInstallPaths {
+                payload_path: Some("/tmp/bat.AppImage".to_owned()),
+                desktop_entry_path: Some("/tmp/aim-bat.desktop".to_owned()),
+                icon_path: Some("/tmp/aim-bat.png".to_owned()),
+            },
+            update_strategy: Some(UpdateStrategySummary {
+                preferred: UpdateChannelSummary {
+                    kind: UpdateChannelKind::GitHubReleases,
+                    locator: "sharkdp/bat".to_owned(),
+                    reason: "install-origin-match".to_owned(),
+                },
+                alternates: Vec::new(),
+            }),
+            metadata: vec![
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.24.0".to_owned()),
+                    primary_download: Some("https://example.test/bat.AppImage".to_owned()),
+                    checksum: Some("sha256:abcdefghijklmnopqrstuvwxyz0123456789".to_owned()),
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: None,
+                    warnings: Vec::new(),
+                },
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.23.0".to_owned()),
+                    primary_download: Some("https://example.test/bat-0.23.0.AppImage".to_owned()),
+                    checksum: Some("sha256:efgh".to_owned()),
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: None,
+                    warnings: Vec::new(),
+                },
+            ],
+        },
+    ))));
+
+    assert!(output.contains("Legacy Bat (legacy-bat)"));
+    assert!(output.contains("v0.24.0"));
+    assert!(output.contains("[up to date]"));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Source"),
+        aim_cli::ui::theme::muted("github - sharkdp/bat")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Update Mechanism"),
+        aim_cli::ui::theme::muted("electron-builder")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Architecture"),
+        aim_cli::ui::theme::muted("x86_64")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Checksum"),
+        aim_cli::ui::theme::muted("sha256:abcdefg...456789")
+    )));
+    assert!(output.contains(&muted_bold_label("Installed as User")));
+    assert!(output.contains("/tmp/bat.AppImage"));
+    assert!(output.contains("/tmp/aim-bat.desktop"));
+    assert!(!output.contains("[up to date]  User"));
+    assert!(!output.contains("past version"));
+    assert!(!output.contains(&aim_cli::ui::theme::label("Metadata")));
+    assert!(!output.contains(&aim_cli::ui::theme::label("Files")));
+    assert!(!output.contains("abcdefghijklmnopqrstuvwxyz0123456789"));
+}
+
+#[test]
+fn installed_show_summary_reports_when_newer_versions_are_available() {
+    let output = render_dispatch_result(&DispatchResult::Show(Box::new(ShowResult::Installed(
+        InstalledShow {
+            stable_id: "t3code".to_owned(),
+            display_name: "t3code".to_owned(),
+            installed_version: Some("0.0.13".to_owned()),
+            source_input: Some("pingdotgg/t3code".to_owned()),
+            source: Some(SourceSummary {
+                kind: SourceKind::GitHub,
+                locator: "pingdotgg/t3code".to_owned(),
+                canonical_locator: Some("pingdotgg/t3code".to_owned()),
+            }),
+            install_scope: Some(InstallScope::User),
+            tracked_paths: TrackedInstallPaths {
+                payload_path: Some("/tmp/t3code.AppImage".to_owned()),
+                desktop_entry_path: None,
+                icon_path: None,
+            },
+            update_strategy: Some(UpdateStrategySummary {
+                preferred: UpdateChannelSummary {
+                    kind: UpdateChannelKind::ElectronBuilder,
+                    locator: "https://github.com/pingdotgg/t3code/releases/download/v0.0.16/latest-linux.yml"
+                        .to_owned(),
+                    reason: "install-origin-match".to_owned(),
+                },
+                alternates: Vec::new(),
+            }),
+            metadata: vec![
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.0.16".to_owned()),
+                    primary_download: None,
+                    checksum: None,
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: Some("latest".to_owned()),
+                    warnings: Vec::new(),
+                },
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.0.15".to_owned()),
+                    primary_download: None,
+                    checksum: None,
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: Some("latest".to_owned()),
+                    warnings: Vec::new(),
+                },
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.0.14".to_owned()),
+                    primary_download: None,
+                    checksum: None,
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: Some("latest".to_owned()),
+                    warnings: Vec::new(),
+                },
+                MetadataSummary {
+                    kind: ParsedMetadataKind::ElectronBuilder,
+                    version: Some("0.0.13".to_owned()),
+                    primary_download: None,
+                    checksum: None,
+                    architecture: Some("x86_64".to_owned()),
+                    channel_label: Some("latest".to_owned()),
+                    warnings: Vec::new(),
+                },
+            ],
+        },
+    ))));
+
+    assert!(output.contains("t3code (t3code)"));
+    assert!(output.contains("v0.0.13"));
+    assert!(output.contains("[update available]"));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Source"),
+        aim_cli::ui::theme::muted("github - pingdotgg/t3code")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Update Mechanism"),
+        aim_cli::ui::theme::muted("electron-builder")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Architecture"),
+        aim_cli::ui::theme::muted("x86_64")
+    )));
+    assert!(output.contains(&muted_bold_label("Installed as User")));
+    assert!(!output.contains("[update available]  User"));
+    assert!(!output.contains("past versions"));
+    assert!(!output.contains("latest v0.0.16"));
+    assert!(!output.contains(&aim_cli::ui::theme::label("Metadata")));
+    assert!(!output.contains(&aim_cli::ui::theme::label("Files")));
+}
+
+#[test]
+fn installed_show_list_renders_each_app_using_singular_show_format() {
+    let output = render_dispatch_result(&DispatchResult::ShowAll(vec![
+        InstalledShow {
+            stable_id: "legacy-bat".to_owned(),
+            display_name: "Legacy Bat".to_owned(),
+            installed_version: Some("0.24.0".to_owned()),
+            source_input: Some("sharkdp/bat".to_owned()),
+            source: Some(SourceSummary {
+                kind: SourceKind::GitHub,
+                locator: "https://github.com/sharkdp/bat".to_owned(),
+                canonical_locator: Some("sharkdp/bat".to_owned()),
+            }),
+            install_scope: Some(InstallScope::User),
+            tracked_paths: TrackedInstallPaths {
+                payload_path: Some("/tmp/bat.AppImage".to_owned()),
+                desktop_entry_path: Some("/tmp/aim-bat.desktop".to_owned()),
+                icon_path: None,
+            },
+            update_strategy: None,
+            metadata: vec![MetadataSummary {
+                kind: ParsedMetadataKind::ElectronBuilder,
+                version: Some("0.24.0".to_owned()),
+                primary_download: None,
+                checksum: Some("sha256:abcdefghijklmnopqrstuvwxyz0123456789".to_owned()),
+                architecture: Some("x86_64".to_owned()),
+                channel_label: None,
+                warnings: Vec::new(),
+            }],
+        },
+        InstalledShow {
+            stable_id: "t3code".to_owned(),
+            display_name: "t3code".to_owned(),
+            installed_version: Some("0.0.13".to_owned()),
+            source_input: Some("pingdotgg/t3code".to_owned()),
+            source: Some(SourceSummary {
+                kind: SourceKind::GitHub,
+                locator: "pingdotgg/t3code".to_owned(),
+                canonical_locator: Some("pingdotgg/t3code".to_owned()),
+            }),
+            install_scope: Some(InstallScope::User),
+            tracked_paths: TrackedInstallPaths {
+                payload_path: Some("/tmp/t3code.AppImage".to_owned()),
+                desktop_entry_path: None,
+                icon_path: None,
+            },
+            update_strategy: None,
+            metadata: vec![MetadataSummary {
+                kind: ParsedMetadataKind::ElectronBuilder,
+                version: Some("0.0.16".to_owned()),
+                primary_download: None,
+                checksum: None,
+                architecture: Some("x86_64".to_owned()),
+                channel_label: None,
+                warnings: Vec::new(),
+            }],
+        },
+    ]));
+
+    assert!(output.contains("Legacy Bat (legacy-bat)"));
+    assert!(output.contains("t3code (t3code)"));
+    assert!(output.contains("\n\n"));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Source"),
+        aim_cli::ui::theme::muted("github - sharkdp/bat")
+    )));
+    assert!(output.contains(&format!(
+        "{} {}",
+        muted_bold_label("Source"),
+        aim_cli::ui::theme::muted("github - pingdotgg/t3code")
+    )));
+}
+
+#[test]
+fn remote_show_summary_renders_source_artifact_and_reason() {
+    let output = render_dispatch_result(&DispatchResult::Show(Box::new(ShowResult::Remote(
+        RemoteShow {
+            source: SourceSummary {
+                kind: SourceKind::GitHub,
+                locator: "sharkdp/bat".to_owned(),
+                canonical_locator: Some("sharkdp/bat".to_owned()),
+            },
+            artifact: RemoteArtifactSummary {
+                url: "https://github.com/sharkdp/bat/releases/download/v1.0.0/Bat-1.0.0-x86_64.AppImage"
+                    .to_owned(),
+                version: Some("1.0.0".to_owned()),
+                arch: Some("x86_64".to_owned()),
+                trusted_checksum: Some("sha512:abcd".to_owned()),
+                selection_reason: "metadata-guided".to_owned(),
+            },
+            interactions: Vec::new(),
+            warnings: Vec::new(),
+        },
+    ))));
+
+    assert!(output.contains("Resolved Source"));
+    assert!(output.contains("github"));
+    assert!(output.contains("sharkdp/bat"));
+    assert!(output.contains("Bat-1.0.0-x86_64.AppImage"));
+    assert!(output.contains("1.0.0"));
+    assert!(output.contains("metadata-guided"));
+    assert!(output.contains("sha512:abcd"));
 }

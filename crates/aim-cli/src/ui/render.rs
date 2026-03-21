@@ -1,6 +1,10 @@
 use aim_core::app::add::AddPlan;
 use aim_core::domain::search::SearchResults;
+use aim_core::domain::show::{
+    InstalledShow, MetadataSummary, RemoteInteractionSummary, RemoteShow, ShowResult, SourceSummary,
+};
 use aim_core::domain::update::UpdateExecutionStatus;
+use console::measure_text_width;
 
 use crate::DispatchResult;
 use crate::config::CliConfig;
@@ -26,6 +30,8 @@ pub fn render_dispatch_result_with_config(result: &DispatchResult, config: &CliC
         DispatchResult::PendingAdd(plan) => render_pending_add(plan),
         DispatchResult::Removed(removed) => render_removed_app(removed),
         DispatchResult::Search(results) => render_search_results_with_config(results, config),
+        DispatchResult::Show(result) => render_show_result(result),
+        DispatchResult::ShowAll(installed) => render_installed_show_list(installed),
         DispatchResult::UpdatePlan(plan) => render_update_plan(plan),
         DispatchResult::Updated(result) => render_updated_apps(result),
         DispatchResult::Noop => String::new(),
@@ -186,6 +192,320 @@ fn render_removed_app(removed: &aim_core::app::remove::RemovalResult) -> String 
     }
 
     lines.extend(warning_lines);
+    lines.join("\n")
+}
+
+fn render_show_result(result: &ShowResult) -> String {
+    match result {
+        ShowResult::Installed(installed) => render_installed_show(installed),
+        ShowResult::Remote(remote) => render_remote_show(remote),
+    }
+}
+
+fn render_installed_show_list(installed: &[InstalledShow]) -> String {
+    if installed.is_empty() {
+        return crate::ui::theme::muted("No installed apps yet");
+    }
+
+    installed
+        .iter()
+        .map(render_installed_show)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn render_installed_show(installed: &InstalledShow) -> String {
+    let mut lines = installed_title_lines(installed);
+
+    if let Some(source_line) = installed_source_line(installed) {
+        lines.push(source_line);
+    }
+
+    if let Some(source_input) = installed.source_input.as_deref()
+        && should_render_requested_input(installed, source_input)
+    {
+        lines.push(format!(
+            "{} {source_input}",
+            crate::ui::theme::label("Requested")
+        ));
+    }
+
+    if let Some(current_metadata) = installed.metadata.first() {
+        lines.extend(metadata_detail_lines(current_metadata));
+    }
+
+    let tracked_paths = [
+        installed.tracked_paths.payload_path.as_deref(),
+        installed.tracked_paths.desktop_entry_path.as_deref(),
+        installed.tracked_paths.icon_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if !tracked_paths.is_empty() {
+        lines.push(installed_files_header(installed.install_scope));
+        lines.extend(
+            tracked_paths
+                .into_iter()
+                .map(|path| crate::ui::theme::muted(&format!("  {path}"))),
+        );
+    }
+
+    lines.join("\n")
+}
+
+fn installed_title_lines(installed: &InstalledShow) -> Vec<String> {
+    let left = crate::ui::theme::heading(&format!(
+        "{} ({})",
+        installed.display_name, installed.stable_id
+    ));
+    let right = installed_right_summary(installed);
+
+    match terminal_width().filter(|width| *width > 0) {
+        Some(width) => {
+            let left_width = measure_text_width(&left);
+            let right_width = measure_text_width(&right);
+            if left_width + right_width + 2 <= width {
+                vec![format!(
+                    "{left}{}{right}",
+                    " ".repeat(width - left_width - right_width)
+                )]
+            } else {
+                vec![left, right]
+            }
+        }
+        None => vec![left, right],
+    }
+}
+
+fn installed_right_summary(installed: &InstalledShow) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(version) = installed.installed_version.as_deref() {
+        parts.push(crate::ui::theme::accent(&format!("v{version}")));
+    }
+
+    if let Some(tag) = installed_status_tag(installed) {
+        parts.push(tag);
+    }
+
+    parts.join("  ")
+}
+
+fn installed_status_tag(installed: &InstalledShow) -> Option<String> {
+    let versions = ordered_metadata_versions(&installed.metadata);
+    let latest_version = versions.first()?.clone();
+    let installed_version = installed.installed_version.as_deref()?;
+
+    if installed_version == latest_version {
+        Some(bold_muted("[up to date]"))
+    } else {
+        Some(crate::ui::theme::accent("[update available]"))
+    }
+}
+
+fn installed_source_line(installed: &InstalledShow) -> Option<String> {
+    let source = installed.source.as_ref()?;
+    Some(labeled_detail_line(
+        "Source",
+        &format!(
+            "{} - {}",
+            source.kind.as_str(),
+            display_source_locator(source)
+        ),
+    ))
+}
+
+fn display_source_locator(source: &SourceSummary) -> &str {
+    source
+        .canonical_locator
+        .as_deref()
+        .unwrap_or(source.locator.as_str())
+}
+
+fn should_render_requested_input(installed: &InstalledShow, source_input: &str) -> bool {
+    let normalized_input = normalize_show_value(source_input);
+
+    if normalized_input == normalize_show_value(&installed.display_name)
+        || normalized_input == normalize_show_value(&installed.stable_id)
+    {
+        return false;
+    }
+
+    installed.source.as_ref().is_none_or(|source| {
+        normalized_input != normalize_show_value(&source.locator)
+            && source
+                .canonical_locator
+                .as_deref()
+                .map(normalize_show_value)
+                .is_none_or(|canonical| normalized_input != canonical)
+    })
+}
+
+fn terminal_width() -> Option<usize> {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .or_else(|| {
+            crossterm::terminal::size()
+                .ok()
+                .map(|(cols, _)| cols as usize)
+        })
+}
+
+fn ordered_metadata_versions(metadata: &[MetadataSummary]) -> Vec<String> {
+    let mut versions = Vec::new();
+
+    for version in metadata.iter().filter_map(|item| item.version.as_deref()) {
+        if !versions.iter().any(|existing| existing == version) {
+            versions.push(version.to_owned());
+        }
+    }
+
+    versions
+}
+
+fn metadata_detail_lines(metadata: &MetadataSummary) -> Vec<String> {
+    let mut lines = vec![labeled_detail_line(
+        "Update Mechanism",
+        metadata_kind_label(metadata.kind),
+    )];
+
+    if let Some(architecture) = metadata.architecture.as_deref() {
+        lines.push(labeled_detail_line("Architecture", architecture));
+    }
+
+    if let Some(checksum) = metadata.checksum.as_deref() {
+        lines.push(labeled_detail_line(
+            "Checksum",
+            &truncate_checksum(checksum),
+        ));
+    }
+
+    lines
+}
+
+fn installed_files_header(scope: Option<aim_core::domain::app::InstallScope>) -> String {
+    let label = match scope {
+        Some(aim_core::domain::app::InstallScope::User) => "Installed as User",
+        Some(aim_core::domain::app::InstallScope::System) => "Installed as System",
+        None => "Installed files",
+    };
+
+    bold_muted_label(label)
+}
+
+fn labeled_detail_line(label: &str, value: &str) -> String {
+    format!(
+        "{} {}",
+        bold_muted_label(label),
+        crate::ui::theme::muted(value)
+    )
+}
+
+fn truncate_checksum(checksum: &str) -> String {
+    const PREFIX_CHARS: usize = 14;
+    const SUFFIX_CHARS: usize = 6;
+    const ELLIPSIS_CHARS: usize = 3;
+
+    let checksum_len = checksum.chars().count();
+
+    if checksum_len <= PREFIX_CHARS + SUFFIX_CHARS + ELLIPSIS_CHARS {
+        checksum.to_owned()
+    } else {
+        let prefix = checksum.chars().take(PREFIX_CHARS).collect::<String>();
+        let suffix = checksum
+            .chars()
+            .skip(checksum_len - SUFFIX_CHARS)
+            .collect::<String>();
+        format!("{prefix}...{suffix}",)
+    }
+}
+
+fn metadata_kind_label(kind: aim_core::domain::update::ParsedMetadataKind) -> &'static str {
+    match kind {
+        aim_core::domain::update::ParsedMetadataKind::Unknown => "unknown",
+        aim_core::domain::update::ParsedMetadataKind::ElectronBuilder => "electron-builder",
+        aim_core::domain::update::ParsedMetadataKind::Zsync => "zsync",
+    }
+}
+
+fn normalize_show_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn bold_muted(message: &str) -> String {
+    let mut style = crate::ui::theme::current_theme().muted;
+    style.bold = true;
+    crate::ui::theme::apply_style_spec(message, &style)
+}
+
+fn bold_muted_label(label: &str) -> String {
+    bold_muted(&format!("{label}:"))
+}
+
+fn render_remote_show(remote: &RemoteShow) -> String {
+    let mut lines = vec![crate::ui::theme::heading("Resolved Source")];
+    lines.push(format!(
+        "{} {} {}",
+        crate::ui::theme::label("Source"),
+        remote.source.kind.as_str(),
+        remote.source.locator,
+    ));
+    if let Some(canonical_locator) = remote.source.canonical_locator.as_deref() {
+        lines.push(format!(
+            "{} {canonical_locator}",
+            crate::ui::theme::label("Canonical")
+        ));
+    }
+    lines.push(format!(
+        "{} {}",
+        crate::ui::theme::label("Artifact"),
+        remote.artifact.url,
+    ));
+    if let Some(version) = remote.artifact.version.as_deref() {
+        lines.push(format!("{} {version}", crate::ui::theme::label("Version")));
+    }
+    if let Some(checksum) = remote.artifact.trusted_checksum.as_deref() {
+        lines.push(format!(
+            "{} {checksum}",
+            crate::ui::theme::label("Checksum")
+        ));
+    }
+    lines.push(format!(
+        "{} {}",
+        crate::ui::theme::label("Selection"),
+        remote.artifact.selection_reason,
+    ));
+
+    if !remote.interactions.is_empty() {
+        lines.push(crate::ui::theme::label("Interactions"));
+        for interaction in &remote.interactions {
+            let text = match interaction {
+                RemoteInteractionSummary::ChooseTrackingPreference {
+                    requested_version,
+                    latest_version,
+                } => format!(
+                    "choose tracking preference: requested {requested_version}, latest {latest_version}"
+                ),
+                RemoteInteractionSummary::SelectArtifact { candidate_count } => {
+                    format!("select artifact: {candidate_count} candidates")
+                }
+            };
+            lines.push(crate::ui::theme::bullet(&text));
+        }
+    }
+
+    if !remote.warnings.is_empty() {
+        lines.push(crate::ui::theme::label("Warnings"));
+        lines.extend(
+            remote
+                .warnings
+                .iter()
+                .map(|warning| format!("Warning: {warning}")),
+        );
+    }
+
     lines.join("\n")
 }
 
