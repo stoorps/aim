@@ -1,6 +1,7 @@
 use aim_core::app::progress::{OperationEvent, OperationStage};
 use aim_core::app::update::{build_update_plan, execute_updates, execute_updates_with_reporter};
 use aim_core::domain::app::{AppRecord, InstallMetadata, InstallScope};
+use aim_core::domain::source::{NormalizedSourceKind, SourceInputKind, SourceKind, SourceRef};
 use aim_core::domain::update::{ChannelPreference, UpdateChannelKind, UpdateStrategy};
 use tempfile::tempdir;
 
@@ -137,4 +138,103 @@ fn update_execution_reports_per_app_lifecycle_events() {
             }
         )
     }));
+}
+
+#[test]
+fn update_plan_uses_direct_asset_fallback_for_direct_url_origin() {
+    let apps = [AppRecord {
+        stable_id: "team-app".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some("https://example.com/downloads/team-app.AppImage".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::DirectUrl,
+            locator: "https://example.com/downloads/team-app.AppImage".to_owned(),
+            input_kind: SourceInputKind::DirectUrl,
+            normalized_kind: NormalizedSourceKind::DirectUrl,
+            canonical_locator: None,
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: false,
+        }),
+        installed_version: Some("unresolved".to_owned()),
+        update_strategy: None,
+        metadata: Vec::new(),
+        install: None,
+    }];
+
+    let plan = build_update_plan(&apps).unwrap();
+
+    assert_eq!(
+        plan.items[0].selected_channel.kind,
+        UpdateChannelKind::DirectAsset
+    );
+    assert_eq!(
+        plan.items[0].selected_channel.locator,
+        "https://example.com/downloads/team-app.AppImage"
+    );
+    assert_eq!(plan.items[0].selection_reason, "install-origin-match");
+}
+
+#[test]
+fn update_execution_rebuilds_gitlab_source_without_rewriting_origin() {
+    let install_home = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let previous = AppRecord {
+        stable_id: "example-team-app".to_owned(),
+        display_name: "team-app".to_owned(),
+        source_input: Some("https://gitlab.com/example/team-app".to_owned()),
+        source: Some(SourceRef {
+            kind: SourceKind::GitLab,
+            locator: "https://gitlab.com/example/team-app".to_owned(),
+            input_kind: SourceInputKind::GitLabUrl,
+            normalized_kind: NormalizedSourceKind::GitLab,
+            canonical_locator: Some("example/team-app".to_owned()),
+            requested_tag: None,
+            requested_asset_name: None,
+            tracks_latest: true,
+        }),
+        installed_version: Some("latest".to_owned()),
+        update_strategy: Some(UpdateStrategy {
+            preferred: ChannelPreference {
+                kind: UpdateChannelKind::DirectAsset,
+                locator: "https://gitlab.com/example/team-app/-/releases/permalink/latest/downloads/team-app.AppImage"
+                    .to_owned(),
+                reason: "provider-release".to_owned(),
+            },
+            alternates: Vec::new(),
+        }),
+        metadata: Vec::new(),
+        install: Some(InstallMetadata {
+            scope: InstallScope::User,
+            payload_path: None,
+            desktop_entry_path: None,
+            icon_path: None,
+        }),
+    };
+
+    let result = execute_updates(std::slice::from_ref(&previous), install_home.path()).unwrap();
+
+    assert_eq!(result.updated_count(), 1);
+    assert_eq!(result.failed_count(), 0);
+    assert_eq!(
+        result.apps[0].source.as_ref().unwrap().kind,
+        SourceKind::GitLab
+    );
+    assert_eq!(
+        result.apps[0].source.as_ref().unwrap().locator,
+        "https://gitlab.com/example/team-app"
+    );
+    assert_eq!(
+        result.apps[0]
+            .source
+            .as_ref()
+            .unwrap()
+            .canonical_locator
+            .as_deref(),
+        Some("example/team-app")
+    );
 }

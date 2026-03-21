@@ -1,5 +1,4 @@
-use crate::domain::source::ResolvedRelease;
-use crate::domain::source::SourceRef;
+use crate::domain::source::{ResolvedRelease, SourceKind, SourceRef};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdapterCapabilities {
@@ -23,6 +22,12 @@ pub struct AdapterResolution {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdapterResolveOutcome {
+    Resolved(AdapterResolution),
+    NoInstallableArtifact { source: SourceRef },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AdapterError {
     UnsupportedQuery,
     UnsupportedSource,
@@ -34,7 +39,34 @@ pub trait SourceAdapter {
 
     fn capabilities(&self) -> AdapterCapabilities;
 
+    fn repository_source_kind(&self) -> Option<SourceKind> {
+        None
+    }
+
+    fn exact_source_kind(&self) -> Option<SourceKind> {
+        None
+    }
+
     fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError>;
 
     fn resolve(&self, source: &SourceRef) -> Result<AdapterResolution, AdapterError>;
+
+    fn resolve_supported_source(
+        &self,
+        source: &SourceRef,
+    ) -> Result<AdapterResolveOutcome, AdapterError> {
+        self.resolve(source).map(AdapterResolveOutcome::Resolved)
+    }
+
+    fn supports_source(&self, source: &SourceRef) -> bool {
+        crate::adapters::supports_source(self, source)
+    }
+
+    fn resolve_source(&self, source: &SourceRef) -> Result<AdapterResolveOutcome, AdapterError> {
+        if !self.supports_source(source) {
+            return Err(AdapterError::UnsupportedSource);
+        }
+
+        self.resolve_supported_source(source)
+    }
 }

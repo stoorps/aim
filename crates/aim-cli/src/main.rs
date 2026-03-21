@@ -23,7 +23,7 @@ fn main() {
             }
         }
         Err(error) => {
-            eprintln!("{error:?}");
+            eprintln!("{error}");
             std::process::exit(1);
         }
     }

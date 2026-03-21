@@ -1,5 +1,9 @@
+use aim_core::app::add::{BuildAddPlanError, build_add_plan_with};
+use aim_core::app::query::ResolveQueryError;
+use aim_core::domain::source::SourceKind;
 use aim_core::integration::install::{DesktopIntegrationRequest, InstallRequest, execute_install};
 use aim_core::platform::DesktopHelpers;
+use aim_core::source::github::FixtureGitHubTransport;
 use std::fs;
 use tempfile::tempdir;
 
@@ -33,4 +37,56 @@ fn integration_failure_removes_new_payload_and_generated_files() {
     assert!(error.to_string().contains("desktop integration failed"));
     assert!(!final_payload_path.exists());
     assert!(!desktop_entry_path.exists());
+}
+
+#[test]
+fn unsupported_queries_remain_distinct_from_provider_resolution_failures() {
+    let error =
+        build_add_plan_with("https://gitlab.com/example", &FixtureGitHubTransport).unwrap_err();
+
+    assert!(matches!(
+        error,
+        BuildAddPlanError::Query(ResolveQueryError::Unsupported)
+    ));
+}
+
+#[test]
+fn supported_sourceforge_project_without_latest_download_reports_no_installable_artifact() {
+    let error = build_add_plan_with(
+        "https://sourceforge.net/projects/team-app/",
+        &FixtureGitHubTransport,
+    )
+    .unwrap_err();
+
+    match error {
+        BuildAddPlanError::NoInstallableArtifact { source } => {
+            assert_eq!(source.kind, SourceKind::SourceForge);
+            assert_eq!(source.locator, "https://sourceforge.net/projects/team-app/");
+            assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+        }
+        other => panic!("expected no-installable-artifact error, got {other:?}"),
+    }
+}
+
+#[test]
+fn supported_sourceforge_version_folder_candidate_without_installable_artifact_reports_no_installable_artifact()
+ {
+    let error = build_add_plan_with(
+        "https://sourceforge.net/projects/team-app/files/releases/v1-0/download",
+        &FixtureGitHubTransport,
+    )
+    .unwrap_err();
+
+    match error {
+        BuildAddPlanError::NoInstallableArtifact { source } => {
+            assert_eq!(source.kind, SourceKind::SourceForge);
+            assert_eq!(
+                source.locator,
+                "https://sourceforge.net/projects/team-app/files/releases/v1-0/download"
+            );
+            assert_eq!(source.canonical_locator.as_deref(), Some("team-app"));
+            assert_eq!(source.normalized_kind.as_str(), "sourceforge-candidate");
+        }
+        other => panic!("expected no-installable-artifact error, got {other:?}"),
+    }
 }

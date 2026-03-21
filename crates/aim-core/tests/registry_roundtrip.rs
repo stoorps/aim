@@ -101,3 +101,107 @@ fn registry_round_trips_install_metadata() {
         Some("/tmp/install-home/.local/share/icons/hicolor/256x256/apps/t3code.png")
     );
 }
+
+#[test]
+fn registry_round_trips_source_identity_for_new_provider_kinds() {
+    let dir = tempdir().unwrap();
+    let store = RegistryStore::new(dir.path().join("registry.toml"));
+    let registry = aim_core::registry::model::Registry {
+        version: 1,
+        apps: vec![
+            aim_core::domain::app::AppRecord {
+                stable_id: "example-team-app".to_owned(),
+                display_name: "team-app".to_owned(),
+                source_input: Some("https://gitlab.com/example/team-app".to_owned()),
+                source: Some(aim_core::domain::source::SourceRef {
+                    kind: aim_core::domain::source::SourceKind::GitLab,
+                    locator: "https://gitlab.com/example/team-app".to_owned(),
+                    input_kind: aim_core::domain::source::SourceInputKind::GitLabUrl,
+                    normalized_kind: aim_core::domain::source::NormalizedSourceKind::GitLab,
+                    canonical_locator: Some("example/team-app".to_owned()),
+                    requested_tag: None,
+                    requested_asset_name: None,
+                    tracks_latest: true,
+                }),
+                installed_version: Some("latest".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            },
+            aim_core::domain::app::AppRecord {
+                stable_id: "team-app".to_owned(),
+                display_name: "team-app".to_owned(),
+                source_input: Some(
+                    "https://sourceforge.net/projects/team-app/files/latest/download".to_owned(),
+                ),
+                source: Some(aim_core::domain::source::SourceRef {
+                    kind: aim_core::domain::source::SourceKind::SourceForge,
+                    locator: "https://sourceforge.net/projects/team-app/files/latest/download"
+                        .to_owned(),
+                    input_kind: aim_core::domain::source::SourceInputKind::SourceForgeUrl,
+                    normalized_kind: aim_core::domain::source::NormalizedSourceKind::SourceForge,
+                    canonical_locator: Some("team-app".to_owned()),
+                    requested_tag: None,
+                    requested_asset_name: None,
+                    tracks_latest: true,
+                }),
+                installed_version: Some("latest".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            },
+            aim_core::domain::app::AppRecord {
+                stable_id: "url-example.com-downloads-team-app.appimage".to_owned(),
+                display_name: "https://example.com/downloads/team-app.AppImage".to_owned(),
+                source_input: Some("https://example.com/downloads/team-app.AppImage".to_owned()),
+                source: Some(aim_core::domain::source::SourceRef {
+                    kind: aim_core::domain::source::SourceKind::DirectUrl,
+                    locator: "https://example.com/downloads/team-app.AppImage".to_owned(),
+                    input_kind: aim_core::domain::source::SourceInputKind::DirectUrl,
+                    normalized_kind: aim_core::domain::source::NormalizedSourceKind::DirectUrl,
+                    canonical_locator: None,
+                    requested_tag: None,
+                    requested_asset_name: None,
+                    tracks_latest: false,
+                }),
+                installed_version: Some("unresolved".to_owned()),
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            },
+        ],
+    };
+
+    store.save(&registry).unwrap();
+    let loaded = store.load().unwrap();
+
+    assert_eq!(
+        loaded.apps[0].source.as_ref().unwrap().kind.as_str(),
+        "gitlab"
+    );
+    assert_eq!(
+        loaded.apps[0]
+            .source
+            .as_ref()
+            .unwrap()
+            .canonical_locator
+            .as_deref(),
+        Some("example/team-app")
+    );
+    assert_eq!(
+        loaded.apps[1].source.as_ref().unwrap().kind.as_str(),
+        "sourceforge"
+    );
+    assert_eq!(
+        loaded.apps[1].source.as_ref().unwrap().locator,
+        "https://sourceforge.net/projects/team-app/files/latest/download"
+    );
+    assert_eq!(
+        loaded.apps[2].source.as_ref().unwrap().kind.as_str(),
+        "direct-url"
+    );
+    assert_eq!(
+        loaded.apps[2].source.as_ref().unwrap().locator,
+        "https://example.com/downloads/team-app.AppImage"
+    );
+}

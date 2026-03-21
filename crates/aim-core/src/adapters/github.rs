@@ -30,6 +30,10 @@ impl SourceAdapter for GitHubAdapter {
         }
     }
 
+    fn repository_source_kind(&self) -> Option<SourceKind> {
+        Some(SourceKind::GitHub)
+    }
+
     fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
         let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
         if source.kind != SourceKind::GitHub {

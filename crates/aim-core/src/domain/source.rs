@@ -2,6 +2,7 @@
 pub enum SourceKind {
     GitHub,
     GitLab,
+    SourceForge,
     DirectUrl,
     File,
 }
@@ -11,6 +12,7 @@ impl SourceKind {
         match self {
             Self::GitHub => "github",
             Self::GitLab => "gitlab",
+            Self::SourceForge => "sourceforge",
             Self::DirectUrl => "direct-url",
             Self::File => "file",
         }
@@ -24,6 +26,7 @@ pub enum SourceInputKind {
     GitHubReleaseUrl,
     GitHubReleaseAssetUrl,
     GitLabUrl,
+    SourceForgeUrl,
     DirectUrl,
     File,
 }
@@ -36,6 +39,7 @@ impl SourceInputKind {
             Self::GitHubReleaseUrl => "github-release-url",
             Self::GitHubReleaseAssetUrl => "github-release-asset-url",
             Self::GitLabUrl => "gitlab-url",
+            Self::SourceForgeUrl => "sourceforge-url",
             Self::DirectUrl => "direct-url",
             Self::File => "file",
         }
@@ -48,6 +52,9 @@ pub enum NormalizedSourceKind {
     GitHubRelease,
     GitHubReleaseAsset,
     GitLab,
+    GitLabCandidate,
+    SourceForge,
+    SourceForgeCandidate,
     DirectUrl,
     File,
 }
@@ -59,6 +66,9 @@ impl NormalizedSourceKind {
             Self::GitHubRelease => "github-release",
             Self::GitHubReleaseAsset => "github-release-asset",
             Self::GitLab => "gitlab",
+            Self::GitLabCandidate => "gitlab-candidate",
+            Self::SourceForge => "sourceforge",
+            Self::SourceForgeCandidate => "sourceforge-candidate",
             Self::DirectUrl => "direct-url",
             Self::File => "file",
         }

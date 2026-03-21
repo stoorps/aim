@@ -5,6 +5,7 @@ use crate::app::progress::{
     NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
 };
 use crate::domain::app::{AppRecord, InstallScope};
+use crate::domain::source::SourceKind;
 use crate::domain::update::{
     ChannelPreference, ExecutedUpdate, PlannedUpdate, UpdateChannelKind, UpdateExecutionResult,
     UpdateExecutionStatus, UpdatePlan,
@@ -116,15 +117,7 @@ fn plan_update(app: &AppRecord) -> PlannedUpdate {
         }
     } else {
         (
-            ChannelPreference {
-                kind: UpdateChannelKind::GitHubReleases,
-                locator: app
-                    .source
-                    .as_ref()
-                    .map(|source| source.locator.clone())
-                    .unwrap_or_else(|| app.stable_id.clone()),
-                reason: "install-origin-match".to_owned(),
-            },
+            fallback_channel_preference(app),
             "install-origin-match".to_owned(),
         )
     };
@@ -134,6 +127,35 @@ fn plan_update(app: &AppRecord) -> PlannedUpdate {
         display_name: app.display_name.clone(),
         selected_channel,
         selection_reason,
+    }
+}
+
+fn fallback_channel_preference(app: &AppRecord) -> ChannelPreference {
+    let Some(source) = app.source.as_ref() else {
+        return ChannelPreference {
+            kind: UpdateChannelKind::GitHubReleases,
+            locator: app.stable_id.clone(),
+            reason: "install-origin-match".to_owned(),
+        };
+    };
+
+    let (kind, locator) = match source.kind {
+        SourceKind::GitHub => (
+            UpdateChannelKind::GitHubReleases,
+            source
+                .canonical_locator
+                .clone()
+                .unwrap_or_else(|| source.locator.clone()),
+        ),
+        SourceKind::GitLab | SourceKind::SourceForge | SourceKind::DirectUrl | SourceKind::File => {
+            (UpdateChannelKind::DirectAsset, source.locator.clone())
+        }
+    };
+
+    ChannelPreference {
+        kind,
+        locator,
+        reason: "install-origin-match".to_owned(),
     }
 }
 

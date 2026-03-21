@@ -15,6 +15,10 @@ impl SourceAdapter for DirectUrlAdapter {
         AdapterCapabilities::exact_resolution_only()
     }
 
+    fn exact_source_kind(&self) -> Option<SourceKind> {
+        Some(SourceKind::DirectUrl)
+    }
+
     fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
         let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
         if source.kind != SourceKind::DirectUrl {

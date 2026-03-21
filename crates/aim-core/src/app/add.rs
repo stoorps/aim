@@ -2,7 +2,11 @@ use std::env;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::adapters::direct_url::DirectUrlAdapter;
+use crate::adapters::gitlab::GitLabAdapter;
+use crate::adapters::sourceforge::SourceForgeAdapter;
 use crate::adapters::traits::AdapterResolution;
+use crate::adapters::traits::{AdapterResolveOutcome, SourceAdapter};
 use crate::app::identity::{IdentityFallback, ResolveIdentityError, resolve_identity};
 use crate::app::interaction::{InteractionKind, InteractionRequest};
 use crate::app::progress::{
@@ -109,6 +113,115 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 artifact,
                 strategy,
             )
+        }
+        SourceKind::GitLab => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::DiscoverRelease,
+                message: "discovering release".to_owned(),
+            });
+            let adapter = GitLabAdapter;
+            let resolution = match adapter
+                .resolve_source(&source)
+                .map_err(|error| BuildAddPlanError::Adapter("gitlab", error))?
+            {
+                AdapterResolveOutcome::Resolved(resolution) => resolution,
+                AdapterResolveOutcome::NoInstallableArtifact { source } => {
+                    return Err(BuildAddPlanError::NoInstallableArtifact { source });
+                }
+            };
+
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
+            let artifact_url = GitLabAdapter::artifact_url(&resolution.source);
+            let strategy = UpdateStrategy {
+                preferred: crate::domain::update::ChannelPreference {
+                    kind: crate::domain::update::UpdateChannelKind::DirectAsset,
+                    locator: artifact_url.clone(),
+                    reason: "provider-release".to_owned(),
+                },
+                alternates: Vec::new(),
+            };
+            let artifact = ArtifactCandidate {
+                url: artifact_url,
+                version: resolution.release.version.clone(),
+                arch: None,
+                selection_reason: "provider-release".to_owned(),
+            };
+
+            (resolution, artifact, strategy)
+        }
+        SourceKind::DirectUrl => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
+            let adapter = DirectUrlAdapter;
+            let resolution = match adapter
+                .resolve_source(&source)
+                .map_err(|error| BuildAddPlanError::Adapter("direct-url", error))?
+            {
+                AdapterResolveOutcome::Resolved(resolution) => resolution,
+                AdapterResolveOutcome::NoInstallableArtifact { source } => {
+                    return Err(BuildAddPlanError::NoInstallableArtifact { source });
+                }
+            };
+            let artifact = ArtifactCandidate {
+                url: resolution.source.locator.clone(),
+                version: resolution.release.version.clone(),
+                arch: None,
+                selection_reason: "exact-input".to_owned(),
+            };
+            let strategy = UpdateStrategy {
+                preferred: crate::domain::update::ChannelPreference {
+                    kind: crate::domain::update::UpdateChannelKind::DirectAsset,
+                    locator: resolution.source.locator.clone(),
+                    reason: "exact-input".to_owned(),
+                },
+                alternates: Vec::new(),
+            };
+
+            (resolution, artifact, strategy)
+        }
+        SourceKind::SourceForge => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::DiscoverRelease,
+                message: "discovering release".to_owned(),
+            });
+            let adapter = SourceForgeAdapter;
+            let resolution = match adapter
+                .resolve_source(&source)
+                .map_err(|error| BuildAddPlanError::Adapter("sourceforge", error))?
+            {
+                AdapterResolveOutcome::Resolved(resolution) => resolution,
+                AdapterResolveOutcome::NoInstallableArtifact { source } => {
+                    return Err(BuildAddPlanError::NoInstallableArtifact { source });
+                }
+            };
+
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
+            let artifact_url = SourceForgeAdapter::artifact_url(&resolution.source)
+                .ok_or(BuildAddPlanError::NoCandidates)?;
+            let artifact = ArtifactCandidate {
+                url: artifact_url.clone(),
+                version: resolution.release.version.clone(),
+                arch: None,
+                selection_reason: "provider-release".to_owned(),
+            };
+            let strategy = UpdateStrategy {
+                preferred: crate::domain::update::ChannelPreference {
+                    kind: crate::domain::update::UpdateChannelKind::DirectAsset,
+                    locator: artifact_url,
+                    reason: "provider-release".to_owned(),
+                },
+                alternates: Vec::new(),
+            };
+
+            (resolution, artifact, strategy)
         }
         _ => {
             reporter.report(&OperationEvent::StageChanged {
@@ -367,7 +480,11 @@ pub struct InstalledApp {
 #[derive(Debug)]
 pub enum BuildAddPlanError {
     Query(ResolveQueryError),
+    Adapter(&'static str, crate::adapters::traits::AdapterError),
     GitHubDiscovery(GitHubDiscoveryError),
+    NoInstallableArtifact {
+        source: crate::domain::source::SourceRef,
+    },
     NoCandidates,
 }
 

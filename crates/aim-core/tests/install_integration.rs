@@ -1,6 +1,7 @@
 use aim_core::app::add::{build_add_plan_with_reporter, install_app_with_reporter};
 use aim_core::app::progress::{OperationEvent, OperationStage};
 use aim_core::domain::app::InstallScope;
+use aim_core::domain::source::{NormalizedSourceKind, SourceKind};
 use aim_core::integration::install::{DesktopIntegrationRequest, InstallRequest, execute_install};
 use aim_core::platform::DesktopHelpers;
 use aim_core::source::github::FixtureGitHubTransport;
@@ -225,4 +226,208 @@ fn install_app_reports_operation_stages_in_order() {
                 OperationStage::DownloadArtifact,
             ]
     }));
+}
+
+#[test]
+fn gitlab_source_builds_concrete_install_candidate() {
+    let mut events: Vec<OperationEvent> = Vec::new();
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let plan = build_add_plan_with_reporter(
+        "https://gitlab.com/example/team-app",
+        &FixtureGitHubTransport,
+        &mut reporter,
+    )
+    .unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::GitLab);
+    assert_eq!(
+        plan.resolution.source.locator,
+        "https://gitlab.com/example/team-app"
+    );
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(
+        plan.selected_artifact.url,
+        "https://gitlab.com/example/team-app/-/releases/permalink/latest/downloads/team-app.AppImage"
+    );
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::DiscoverRelease,
+        message: "discovering release".to_owned(),
+    }));
+}
+
+#[test]
+fn gitlab_candidate_builds_concrete_install_candidate() {
+    let mut events: Vec<OperationEvent> = Vec::new();
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let query = "https://gitlab.com/acme/platform/releases/team-app";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::GitLab);
+    assert_eq!(plan.resolution.source.locator, query);
+    assert_eq!(
+        plan.resolution.source.canonical_locator.as_deref(),
+        Some("acme/platform/releases/team-app")
+    );
+    assert_eq!(
+        plan.resolution.source.normalized_kind,
+        NormalizedSourceKind::GitLab
+    );
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(
+        plan.selected_artifact.url,
+        "https://gitlab.com/acme/platform/releases/team-app/-/releases/permalink/latest/downloads/team-app.AppImage"
+    );
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::DiscoverRelease,
+        message: "discovering release".to_owned(),
+    }));
+}
+
+#[test]
+fn gitlab_install_preserves_truthful_gitlab_origin() {
+    let root = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://gitlab.com/example/team-app";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    let installed =
+        install_app_with_reporter(query, &plan, root.path(), InstallScope::User, &mut reporter)
+            .unwrap();
+
+    assert_eq!(installed.record.source_input.as_deref(), Some(query));
+    assert_eq!(
+        installed.record.installed_version.as_deref(),
+        Some("latest")
+    );
+    assert_eq!(installed.source.kind, SourceKind::GitLab);
+    assert_eq!(installed.source.locator, query);
+    assert_eq!(
+        installed.source.canonical_locator.as_deref(),
+        Some("example/team-app")
+    );
+    assert_eq!(
+        installed.selected_artifact.url,
+        "https://gitlab.com/example/team-app/-/releases/permalink/latest/downloads/team-app.AppImage"
+    );
+}
+
+#[test]
+fn direct_url_source_uses_exact_input_resolution() {
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://example.com/downloads/team-app.AppImage";
+
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::DirectUrl);
+    assert_eq!(plan.resolution.source.locator, query);
+    assert_eq!(plan.resolution.release.version, "unresolved");
+    assert_eq!(plan.selected_artifact.url, query);
+    assert_eq!(plan.selected_artifact.version, "unresolved");
+    assert_eq!(plan.selected_artifact.selection_reason, "exact-input");
+    assert_eq!(plan.update_strategy.preferred.locator, query);
+    assert_eq!(plan.update_strategy.preferred.reason, "exact-input");
+}
+
+#[test]
+fn direct_url_install_preserves_truthful_direct_url_origin() {
+    let root = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://sourceforge.net/projects/team-app/files/team-app-1.0.0.AppImage/download";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    let installed =
+        install_app_with_reporter(query, &plan, root.path(), InstallScope::User, &mut reporter)
+            .unwrap();
+
+    assert_eq!(installed.record.source_input.as_deref(), Some(query));
+    assert_eq!(
+        installed.record.installed_version.as_deref(),
+        Some("unresolved")
+    );
+    assert_eq!(installed.source.kind, SourceKind::DirectUrl);
+    assert_eq!(installed.source.locator, query);
+    assert_eq!(installed.selected_artifact.url, query);
+}
+
+#[test]
+fn sourceforge_candidate_builds_concrete_install_candidate() {
+    let mut events: Vec<OperationEvent> = Vec::new();
+    let mut reporter = |event: &OperationEvent| events.push(event.clone());
+
+    let query = "https://sourceforge.net/projects/team-app/files/releases/stable/download";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::SourceForge);
+    assert_eq!(plan.resolution.source.locator, query);
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(plan.selected_artifact.url, query);
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+    assert_eq!(plan.update_strategy.preferred.locator, query);
+    assert_eq!(plan.update_strategy.preferred.reason, "provider-release");
+    assert!(events.contains(&OperationEvent::StageChanged {
+        stage: OperationStage::DiscoverRelease,
+        message: "discovering release".to_owned(),
+    }));
+}
+
+#[test]
+fn sourceforge_latest_download_builds_concrete_install_candidate() {
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://sourceforge.net/projects/team-app/files/latest/download";
+
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    assert_eq!(plan.resolution.source.kind, SourceKind::SourceForge);
+    assert_eq!(plan.resolution.source.locator, query);
+    assert_eq!(plan.resolution.release.version, "latest");
+    assert_eq!(plan.selected_artifact.url, query);
+    assert_eq!(plan.selected_artifact.version, "latest");
+    assert_eq!(plan.selected_artifact.selection_reason, "provider-release");
+}
+
+#[test]
+fn sourceforge_latest_download_install_preserves_truthful_origin() {
+    let root = tempdir().unwrap();
+
+    unsafe {
+        std::env::set_var("AIM_GITHUB_FIXTURE_MODE", "1");
+    }
+
+    let mut reporter = |_event: &OperationEvent| {};
+    let query = "https://sourceforge.net/projects/team-app/files/latest/download";
+    let plan = build_add_plan_with_reporter(query, &FixtureGitHubTransport, &mut reporter).unwrap();
+
+    let installed =
+        install_app_with_reporter(query, &plan, root.path(), InstallScope::User, &mut reporter)
+            .unwrap();
+
+    assert_eq!(installed.record.source_input.as_deref(), Some(query));
+    assert_eq!(
+        installed.record.installed_version.as_deref(),
+        Some("latest")
+    );
+    assert_eq!(installed.source.kind, SourceKind::SourceForge);
+    assert_eq!(installed.source.locator, query);
+    assert_eq!(
+        installed.source.canonical_locator.as_deref(),
+        Some("team-app")
+    );
+    assert_eq!(installed.selected_artifact.url, query);
 }

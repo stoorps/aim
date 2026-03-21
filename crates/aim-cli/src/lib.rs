@@ -155,6 +155,47 @@ pub enum DispatchError {
     UpdateExecution(aim_core::app::update::ExecuteUpdatesError),
 }
 
+impl std::fmt::Display for DispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AddPlan(error) => match error {
+                aim_core::app::add::BuildAddPlanError::Query(
+                    aim_core::app::query::ResolveQueryError::Unsupported,
+                ) => write!(f, "unsupported source query"),
+                aim_core::app::add::BuildAddPlanError::NoInstallableArtifact { source } => write!(
+                    f,
+                    "no installable artifact found for {} {}",
+                    source.kind.as_str(),
+                    source.locator
+                ),
+                aim_core::app::add::BuildAddPlanError::Adapter(id, error) => match error {
+                    aim_core::adapters::traits::AdapterError::UnsupportedQuery => {
+                        write!(f, "{id} does not support this query")
+                    }
+                    aim_core::adapters::traits::AdapterError::UnsupportedSource => {
+                        write!(f, "{id} does not support this source")
+                    }
+                    aim_core::adapters::traits::AdapterError::ResolutionFailed(reason) => {
+                        write!(f, "{id} resolution failed: {reason}")
+                    }
+                },
+                aim_core::app::add::BuildAddPlanError::GitHubDiscovery(error) => {
+                    write!(f, "github discovery failed: {error:?}")
+                }
+                aim_core::app::add::BuildAddPlanError::NoCandidates => {
+                    write!(f, "no installable candidates found")
+                }
+            },
+            Self::AddInstall(error) => write!(f, "install failed: {error:?}"),
+            Self::Prompt(error) => write!(f, "prompt failed: {error:?}"),
+            Self::RemovePlan(error) => write!(f, "remove failed: {error:?}"),
+            Self::Registry(error) => write!(f, "registry failed: {error:?}"),
+            Self::UpdatePlan(error) => write!(f, "update planning failed: {error:?}"),
+            Self::UpdateExecution(error) => write!(f, "update execution failed: {error:?}"),
+        }
+    }
+}
+
 impl From<aim_core::app::add::BuildAddPlanError> for DispatchError {
     fn from(value: aim_core::app::add::BuildAddPlanError) -> Self {
         Self::AddPlan(value)

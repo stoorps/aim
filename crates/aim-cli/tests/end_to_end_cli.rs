@@ -201,6 +201,103 @@ fn cli_add_installs_and_renders_resolved_mode() {
 }
 
 #[test]
+fn cli_add_installs_gitlab_source_with_truthful_origin() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("https://gitlab.com/example/team-app")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Installed team-app (user)"))
+        .stdout(contains("Source: gitlab https://gitlab.com/example/team-app"))
+        .stdout(contains(
+            "Artifact: https://gitlab.com/example/team-app/-/releases/permalink/latest/downloads/team-app.AppImage",
+        ));
+
+    let contents = std::fs::read_to_string(&registry_path).unwrap();
+    assert!(contents.contains("source_input = \"https://gitlab.com/example/team-app\""));
+    assert!(contents.contains("kind = \"GitLab\""));
+    assert!(contents.contains("locator = \"https://gitlab.com/example/team-app\""));
+    assert!(contents.contains("canonical_locator = \"example/team-app\""));
+}
+
+#[test]
+fn cli_add_preserves_direct_url_origin_for_provider_like_downloads() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let query = "https://sourceforge.net/projects/team-app/files/team-app-1.0.0.AppImage/download";
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg(query)
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Installed "))
+        .stdout(contains(format!("Source: direct-url {query}")))
+        .stdout(contains(format!("Artifact: {query}")));
+
+    let contents = std::fs::read_to_string(&registry_path).unwrap();
+    assert!(contents.contains(&format!("source_input = \"{query}\"")));
+    assert!(contents.contains("kind = \"DirectUrl\""));
+    assert!(contents.contains(&format!("locator = \"{query}\"")));
+    assert!(!contents.contains("kind = \"SourceForge\""));
+}
+
+#[test]
+fn cli_add_installs_sourceforge_latest_download_with_truthful_origin() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let query = "https://sourceforge.net/projects/team-app/files/latest/download";
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg(query)
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Installed team-app (user)"))
+        .stdout(contains(format!("Source: sourceforge {query}")))
+        .stdout(contains(format!("Artifact: {query}")));
+
+    let contents = std::fs::read_to_string(&registry_path).unwrap();
+    assert!(contents.contains(&format!("source_input = \"{query}\"")));
+    assert!(contents.contains("kind = \"SourceForge\""));
+    assert!(contents.contains(&format!("locator = \"{query}\"")));
+    assert!(contents.contains("canonical_locator = \"team-app\""));
+}
+
+#[test]
+fn cli_reports_unsupported_source_queries_distinctly() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("https://gitlab.com/example")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .failure()
+        .stderr(contains("unsupported source query"));
+}
+
+#[test]
+fn cli_reports_supported_sources_without_installable_artifacts_distinctly() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("https://sourceforge.net/projects/team-app/")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .assert()
+        .failure()
+        .stderr(contains("no installable artifact found"))
+        .stderr(contains("sourceforge"));
+}
+
+#[test]
 fn cli_add_emits_live_progress_to_stderr() {
     let dir = tempdir().unwrap();
     let registry_path = dir.path().join("registry.toml");
