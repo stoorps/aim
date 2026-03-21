@@ -1,3 +1,4 @@
+use aim_core::adapters::appimagehub::AppImageHubAdapter;
 use aim_core::adapters::direct_url::DirectUrlAdapter;
 use aim_core::adapters::github::GitHubAdapter;
 use aim_core::adapters::gitlab::GitLabAdapter;
@@ -9,6 +10,7 @@ use aim_core::app::query::resolve_query;
 use aim_core::domain::source::{
     NormalizedSourceKind, ResolvedRelease, SourceInputKind, SourceKind, SourceRef,
 };
+use aim_core::source::appimagehub::FixtureAppImageHubTransport;
 
 struct FileArtifactAdapter;
 
@@ -57,6 +59,60 @@ fn file_source() -> SourceRef {
 fn adapter_capabilities_can_report_exact_resolution_only() {
     let capabilities = AdapterCapabilities::exact_resolution_only();
     assert!(!capabilities.supports_search);
+}
+
+#[test]
+fn appimagehub_adapter_reports_search_and_exact_resolution_capabilities() {
+    let adapter = AppImageHubAdapter;
+
+    assert_eq!(adapter.id(), "appimagehub");
+    assert_eq!(
+        adapter.repository_source_kind(),
+        Some(SourceKind::AppImageHub)
+    );
+    assert_eq!(adapter.exact_source_kind(), None);
+    assert_eq!(
+        adapter.capabilities(),
+        AdapterCapabilities {
+            supports_search: true,
+            supports_exact_resolution: true,
+        }
+    );
+}
+
+#[test]
+fn appimagehub_adapter_resolves_installable_items_through_fixture_transport() {
+    let adapter = AppImageHubAdapter;
+    let source = resolve_query("appimagehub/2338455").unwrap();
+
+    let resolution = adapter
+        .resolve_source_with(&source, &FixtureAppImageHubTransport)
+        .unwrap();
+
+    assert!(matches!(
+        resolution,
+        AdapterResolveOutcome::Resolved(AdapterResolution {
+            source,
+            release: ResolvedRelease { version, .. },
+        }) if source.kind == SourceKind::AppImageHub
+            && source.canonical_locator.as_deref() == Some("2338455")
+            && version == "latest"
+    ));
+}
+
+#[test]
+fn appimagehub_adapter_reports_no_installable_artifact_for_non_appimage_items() {
+    let adapter = AppImageHubAdapter;
+    let source = resolve_query("appimagehub/2337998").unwrap();
+
+    let resolution = adapter
+        .resolve_source_with(&source, &FixtureAppImageHubTransport)
+        .unwrap();
+
+    assert_eq!(
+        resolution,
+        AdapterResolveOutcome::NoInstallableArtifact { source }
+    );
 }
 
 #[test]

@@ -25,6 +25,7 @@ indicatif = "0.17.11"
 libc = "0.2.171"
 ratatui = "0.29.0"
 reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+quick-xml = { version = "0.37.5", features = ["serialize"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"

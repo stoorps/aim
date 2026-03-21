@@ -148,9 +148,11 @@ fn fallback_channel_preference(app: &AppRecord) -> ChannelPreference {
                 .clone()
                 .unwrap_or_else(|| source.locator.clone()),
         ),
-        SourceKind::GitLab | SourceKind::SourceForge | SourceKind::DirectUrl | SourceKind::File => {
-            (UpdateChannelKind::DirectAsset, source.locator.clone())
-        }
+        SourceKind::GitLab
+        | SourceKind::AppImageHub
+        | SourceKind::SourceForge
+        | SourceKind::DirectUrl
+        | SourceKind::File => (UpdateChannelKind::DirectAsset, source.locator.clone()),
     };
 
     ChannelPreference {

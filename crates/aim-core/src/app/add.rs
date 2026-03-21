@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::adapters::appimagehub::AppImageHubAdapter;
 use crate::adapters::direct_url::DirectUrlAdapter;
 use crate::adapters::gitlab::GitLabAdapter;
 use crate::adapters::sourceforge::SourceForgeAdapter;
@@ -24,6 +25,7 @@ use crate::integration::install::{
 use crate::integration::policy::{IntegrationMode, resolve_install_policy};
 use crate::metadata::parse_document;
 use crate::platform::probe_live_host;
+use crate::source::appimagehub::resolve_appimagehub_item;
 use crate::source::github::{
     GitHubDiscoveryError, GitHubTransport, discover_github_candidates_with, http_client_policy,
 };
@@ -59,6 +61,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
 
     let mut interactions = Vec::new();
     let mut parsed_metadata = Vec::new();
+    let mut display_name_hint = None;
     let (resolution, selected_artifact, update_strategy) = match source.kind {
         SourceKind::GitHub => {
             reporter.report(&OperationEvent::StageChanged {
@@ -152,6 +155,57 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
                 arch: None,
                 trusted_checksum: None,
                 selection_reason: "provider-release".to_owned(),
+            };
+
+            (resolution, artifact, strategy)
+        }
+        SourceKind::AppImageHub => {
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::DiscoverRelease,
+                message: "discovering release".to_owned(),
+            });
+            let adapter = AppImageHubAdapter;
+            let resolution = match adapter
+                .resolve_source(&source)
+                .map_err(|error| BuildAddPlanError::Adapter("appimagehub", error))?
+            {
+                AdapterResolveOutcome::Resolved(resolution) => resolution,
+                AdapterResolveOutcome::NoInstallableArtifact { source } => {
+                    return Err(BuildAddPlanError::NoInstallableArtifact { source });
+                }
+            };
+            let resolved_item = resolve_appimagehub_item(&resolution.source)
+                .map_err(|error| {
+                    BuildAddPlanError::Adapter(
+                        "appimagehub",
+                        crate::adapters::traits::AdapterError::ResolutionFailed(format!(
+                            "{error:?}"
+                        )),
+                    )
+                })?
+                .ok_or(BuildAddPlanError::NoInstallableArtifact {
+                    source: resolution.source.clone(),
+                })?;
+            display_name_hint = Some(resolved_item.title.clone());
+
+            reporter.report(&OperationEvent::StageChanged {
+                stage: OperationStage::SelectArtifact,
+                message: "selecting artifact".to_owned(),
+            });
+            let artifact = ArtifactCandidate {
+                url: resolved_item.download.url.clone(),
+                version: resolved_item.version.clone(),
+                arch: resolved_item.download.arch.clone(),
+                trusted_checksum: None,
+                selection_reason: "provider-release".to_owned(),
+            };
+            let strategy = UpdateStrategy {
+                preferred: crate::domain::update::ChannelPreference {
+                    kind: crate::domain::update::UpdateChannelKind::DirectAsset,
+                    locator: resolved_item.download.url.clone(),
+                    reason: "provider-release".to_owned(),
+                },
+                alternates: Vec::new(),
             };
 
             (resolution, artifact, strategy)
@@ -266,6 +320,7 @@ pub fn build_add_plan_with_reporter<T: GitHubTransport + ?Sized>(
         interactions,
         update_strategy,
         metadata: parsed_metadata,
+        display_name_hint,
     })
 }
 
@@ -299,6 +354,7 @@ pub struct AddPlan {
     pub interactions: Vec<InteractionRequest>,
     pub update_strategy: UpdateStrategy,
     pub metadata: Vec<ParsedMetadata>,
+    pub display_name_hint: Option<String>,
 }
 
 pub fn materialize_app_record(
@@ -312,7 +368,7 @@ pub fn materialize_app_record(
         .as_deref()
         .unwrap_or(source_input);
     let identity = resolve_identity(
-        None,
+        plan.display_name_hint.as_deref(),
         None,
         Some(identity_source),
         IdentityFallback::AllowRawUrl,

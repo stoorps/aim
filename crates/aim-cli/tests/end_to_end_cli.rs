@@ -201,6 +201,75 @@ fn cli_add_installs_and_renders_resolved_mode() {
 }
 
 #[test]
+fn positional_query_falls_back_to_search_for_plain_name_queries() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("firefox")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Search Results"))
+        .stdout(contains(
+            "[appimagehub] Firefox by Mozilla - Official AppImage Edition",
+        ))
+        .stdout(contains("Install query: appimagehub/2338455"))
+        .stdout(contains("Installed firefox").not())
+        .stdout(contains("unsupported source query").not());
+
+    assert!(!registry_path.exists());
+}
+
+#[test]
+fn positional_query_falls_back_to_empty_search_when_direct_item_has_no_appimage() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("appimagehub/2337998")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Search Results"))
+        .stdout(contains("No remote matches"))
+        .stdout(contains("No installed matches"))
+        .stdout(contains("unsupported source query").not())
+        .stdout(contains("no installable artifact").not());
+
+    assert!(!registry_path.exists());
+}
+
+#[test]
+fn cli_add_installs_appimagehub_source_with_truthful_origin() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.arg("appimagehub/2338455")
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains(
+            "Installed Firefox by Mozilla - Official AppImage Edition (user)",
+        ))
+        .stdout(contains(
+            "Source: appimagehub https://www.appimagehub.com/p/2338455",
+        ))
+        .stdout(contains(
+            "Artifact: https://files06.pling.com/api/files/download/firefox-x86-64.AppImage",
+        ));
+
+    let contents = std::fs::read_to_string(&registry_path).unwrap();
+    assert!(contents.contains("display_name = \"Firefox by Mozilla - Official AppImage Edition\""));
+    assert!(contents.contains("kind = \"AppImageHub\""));
+    assert!(contents.contains("canonical_locator = \"2338455\""));
+}
+
+#[test]
 fn cli_add_installs_gitlab_source_with_truthful_origin() {
     let dir = tempdir().unwrap();
     let registry_path = dir.path().join("registry.toml");
@@ -329,9 +398,13 @@ fn cli_reports_unsupported_source_queries_distinctly() {
 
     cmd.arg("https://gitlab.com/example")
         .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
         .assert()
-        .failure()
-        .stderr(contains("unsupported source query"));
+        .success()
+        .stdout(contains("Search Results"))
+        .stdout(contains("No remote matches"))
+        .stdout(contains("No installed matches"))
+        .stderr(contains("unsupported source query").not());
 }
 
 #[test]
@@ -342,10 +415,13 @@ fn cli_reports_supported_sources_without_installable_artifacts_distinctly() {
 
     cmd.arg("https://sourceforge.net/projects/team-app/")
         .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
         .assert()
-        .failure()
-        .stderr(contains("no installable artifact found"))
-        .stderr(contains("sourceforge"));
+        .success()
+        .stdout(contains("Search Results"))
+        .stdout(contains("No remote matches"))
+        .stdout(contains("No installed matches"))
+        .stderr(contains("no installable artifact found").not());
 }
 
 #[test]

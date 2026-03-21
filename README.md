@@ -24,9 +24,11 @@ aim remove <QUERY>
 ## Query Forms
 
 - `owner/repo` for GitHub shorthand
+- `appimagehub/<id>` for AppImageHub shorthand
 - GitHub repository URLs
 - GitHub release URLs
 - direct GitHub release asset URLs
+- AppImageHub item URLs such as `https://www.appimagehub.com/p/2338455`
 - `https://...` direct URLs
 - GitLab URLs
 - SourceForge URLs
@@ -36,10 +38,9 @@ aim remove <QUERY>
 
 `aim search <QUERY>` is part of v0.9 finalisation.
 
-- v0.9 search is GitHub-backed first
-- search results should resolve to install-ready GitHub shorthand such as `owner/repo`
+- search is provider-extensible and currently includes GitHub plus AppImageHub
+- search results should resolve to install-ready queries such as `owner/repo` and `appimagehub/<id>`
 - the search model is provider-extensible for future phases
-- `custom-json` is deferred and is not part of the v0.9 search or install contract
 
 ## Scope Overrides
 
@@ -50,7 +51,7 @@ By default `aim` auto-detects whether to use user or system scope. Override that
 
 ## Current Flow Shape
 
-- `aim <QUERY>` installs unambiguous apps, shows live progress on stderr, prints an `Installation Summary` on stdout, and renders an `Installation Review` when tracking needs confirmation
+- `aim <QUERY>` installs direct provider matches when available, otherwise falls back to search results, shows live progress on stderr, prints an `Installation Summary` on stdout for installs, and renders an `Installation Review` when tracking needs confirmation
 - bare `aim` prints an `Update Review` without mutating the registry
 - `aim update` executes the pending updates, streams live status on stderr, then prints an `Update Summary`
 - `aim list` renders either `Installed Apps` or `No installed apps yet`

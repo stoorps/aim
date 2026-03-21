@@ -27,6 +27,29 @@ fn classifies_github_release_asset_url() {
 }
 
 #[test]
+fn classifies_appimagehub_item_url() {
+    let source = resolve_query("https://www.appimagehub.com/p/2338455").unwrap();
+
+    assert_eq!(source.kind, SourceKind::AppImageHub);
+    assert_eq!(source.input_kind, SourceInputKind::AppImageHubUrl);
+    assert_eq!(source.normalized_kind, NormalizedSourceKind::AppImageHub);
+    assert_eq!(source.canonical_locator.as_deref(), Some("2338455"));
+    assert!(source.tracks_latest);
+}
+
+#[test]
+fn classifies_appimagehub_id_shorthand() {
+    let source = resolve_query("appimagehub/2338455").unwrap();
+
+    assert_eq!(source.kind, SourceKind::AppImageHub);
+    assert_eq!(source.input_kind, SourceInputKind::AppImageHubShorthand);
+    assert_eq!(source.normalized_kind, NormalizedSourceKind::AppImageHub);
+    assert_eq!(source.locator, "https://www.appimagehub.com/p/2338455");
+    assert_eq!(source.canonical_locator.as_deref(), Some("2338455"));
+    assert!(source.tracks_latest);
+}
+
+#[test]
 fn classifies_gitlab_repository_url() {
     let source = resolve_query("https://gitlab.com/example/team-app").unwrap();
 
@@ -274,6 +297,13 @@ fn rejects_unsupported_gitlab_packages_url() {
 #[test]
 fn rejects_malformed_sourceforge_url() {
     let error = resolve_query("https://sourceforge.net/projects/").unwrap_err();
+
+    assert_eq!(error, aim_core::app::query::ResolveQueryError::Unsupported);
+}
+
+#[test]
+fn rejects_malformed_appimagehub_shorthand() {
+    let error = resolve_query("appimagehub/firefox").unwrap_err();
 
     assert_eq!(error, aim_core::app::query::ResolveQueryError::Unsupported);
 }

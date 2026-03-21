@@ -151,3 +151,21 @@ fn search_command_keeps_empty_results_in_plain_text_mode() {
         .stdout(contains("Search Results"))
         .stdout(contains("No remote matches"));
 }
+
+#[test]
+fn search_command_renders_appimagehub_results() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let mut cmd = Command::cargo_bin("aim").unwrap();
+
+    cmd.args(["search", "firefox"])
+        .env("AIM_REGISTRY_PATH", &registry_path)
+        .env(FIXTURE_MODE_ENV, "1")
+        .assert()
+        .success()
+        .stdout(contains("Search Results"))
+        .stdout(contains(
+            "[appimagehub] Firefox by Mozilla - Official AppImage Edition",
+        ))
+        .stdout(contains("Install query: appimagehub/2338455"));
+}

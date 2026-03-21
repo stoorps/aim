@@ -109,7 +109,27 @@ pub fn dispatch_with_reporter(
     if let Some(query) = cli.query {
         let requested_scope = resolve_requested_scope(cli.system, cli.user, is_effective_root());
         let transport = aim_core::source::github::default_transport();
-        let mut plan = build_add_plan_with_reporter(&query, transport.as_ref(), reporter)?;
+        let plan_result = build_add_plan_with_reporter(&query, transport.as_ref(), reporter);
+        let mut plan = match plan_result {
+            Ok(plan) => plan,
+            Err(
+                aim_core::app::add::BuildAddPlanError::Query(
+                    aim_core::app::query::ResolveQueryError::Unsupported,
+                )
+                | aim_core::app::add::BuildAddPlanError::NoInstallableArtifact { .. },
+            ) => {
+                reporter.report(&OperationEvent::Started {
+                    kind: OperationKind::Search,
+                    label: query.clone(),
+                });
+                let results = build_search_results(&SearchQuery::new(&query), &apps)?;
+                reporter.report(&OperationEvent::Finished {
+                    summary: format!("search complete: {} remote hits", results.remote_hits.len()),
+                });
+                return Ok(DispatchResult::Search(results));
+            }
+            Err(error) => return Err(error.into()),
+        };
         if !plan.interactions.is_empty() {
             match ui::prompt::resolve_add_plan_interactions(plan.clone())? {
                 Some(resolved) => {

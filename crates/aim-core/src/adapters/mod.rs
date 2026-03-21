@@ -1,4 +1,4 @@
-pub mod custom_json;
+pub mod appimagehub;
 pub mod direct_url;
 pub mod github;
 pub mod gitlab;
@@ -12,12 +12,12 @@ use crate::domain::source::SourceRef;
 
 pub fn all_adapter_kinds() -> Vec<&'static str> {
     vec![
+        "appimagehub",
         "github",
         "gitlab",
         "direct-url",
         "zsync",
         "sourceforge",
-        "custom-json",
     ]
 }
 

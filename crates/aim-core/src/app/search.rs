@@ -3,6 +3,9 @@ use crate::domain::search::{
     InstalledSearchMatch, SearchInstallStatus, SearchQuery, SearchResult, SearchResults,
     SearchWarning,
 };
+use crate::source::appimagehub::{
+    AppImageHubSearchError, AppImageHubTransport, search_appimagehub_with,
+};
 use crate::source::github::{
     GitHubSearchError, GitHubTransport, TransportRelease, default_transport,
     search_github_repositories_with,
@@ -37,9 +40,15 @@ pub fn build_search_results(
     query: &SearchQuery,
     installed_apps: &[AppRecord],
 ) -> Result<SearchResults, SearchError> {
-    let transport = default_transport();
-    let provider = GitHubSearchProvider::new(transport.as_ref());
-    build_search_results_with(query, installed_apps, &[&provider])
+    let github_transport = default_transport();
+    let appimagehub_transport = crate::source::appimagehub::default_transport();
+    let github_provider = GitHubSearchProvider::new(github_transport.as_ref());
+    let appimagehub_provider = AppImageHubSearchProvider::new(appimagehub_transport.as_ref());
+    build_search_results_with(
+        query,
+        installed_apps,
+        &[&github_provider, &appimagehub_provider],
+    )
 }
 
 pub fn build_search_results_with(
@@ -82,6 +91,58 @@ pub struct GitHubSearchProvider<'a, T: GitHubTransport + ?Sized> {
 impl<'a, T: GitHubTransport + ?Sized> GitHubSearchProvider<'a, T> {
     pub fn new(transport: &'a T) -> Self {
         Self { transport }
+    }
+}
+
+pub struct AppImageHubSearchProvider<'a, T: AppImageHubTransport + ?Sized> {
+    transport: &'a T,
+}
+
+impl<'a, T: AppImageHubTransport + ?Sized> AppImageHubSearchProvider<'a, T> {
+    pub fn new(transport: &'a T) -> Self {
+        Self { transport }
+    }
+}
+
+impl<T: AppImageHubTransport + ?Sized> SearchProvider for AppImageHubSearchProvider<'_, T> {
+    fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchProviderError> {
+        let hits = search_appimagehub_with(&query.text, query.remote_limit, self.transport)
+            .map_err(|error| {
+                SearchProviderError::new("appimagehub", &render_appimagehub_search_error(&error))
+            })?;
+
+        let normalized_query = normalize_lookup(&query.text);
+        let mut ranked_hits = hits
+            .into_iter()
+            .enumerate()
+            .map(|(index, hit)| {
+                (
+                    appimagehub_remote_match_rank(
+                        &normalized_query,
+                        &hit.name,
+                        hit.summary.as_deref(),
+                    ),
+                    index,
+                    hit,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        ranked_hits.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+
+        Ok(ranked_hits
+            .into_iter()
+            .map(|(_, _, hit)| SearchResult {
+                provider_id: "appimagehub".to_owned(),
+                display_name: hit.name,
+                description: hit.summary,
+                source_locator: hit.detail_page,
+                install_query: format!("appimagehub/{}", hit.id),
+                canonical_locator: hit.id,
+                version: Some(hit.version),
+                install_status: SearchInstallStatus::Available,
+            })
+            .collect())
     }
 }
 
@@ -252,17 +313,28 @@ fn app_matches_remote_hit(app: &AppRecord, hit: &SearchResult) -> bool {
 }
 
 fn app_search_locator(app: &AppRecord) -> Option<String> {
-    if let Some(source) = &app.source
-        && source.kind == crate::domain::source::SourceKind::GitHub
-    {
-        if let Some(locator) = source.canonical_locator.as_deref() {
-            return Some(normalize_lookup(locator));
+    if let Some(source) = &app.source {
+        match source.kind {
+            crate::domain::source::SourceKind::GitHub
+            | crate::domain::source::SourceKind::AppImageHub => {
+                if let Some(locator) = source.canonical_locator.as_deref() {
+                    return Some(normalize_lookup(locator));
+                }
+                return Some(normalize_lookup(&source.locator));
+            }
+            _ => {}
         }
-        return Some(normalize_lookup(&source.locator));
     }
 
     app.source_input.as_deref().and_then(|input| {
         if input.contains('/') && !input.contains("://") {
+            if let Some((provider, id)) = input.split_once('/')
+                && provider.eq_ignore_ascii_case("appimagehub")
+                && !id.is_empty()
+            {
+                return Some(normalize_lookup(id));
+            }
+
             Some(normalize_lookup(input))
         } else {
             None
@@ -318,5 +390,47 @@ fn github_remote_match_rank(
 fn render_github_search_error(error: &GitHubSearchError) -> String {
     match error {
         GitHubSearchError::Transport(inner) => inner.to_string(),
+    }
+}
+
+fn appimagehub_remote_match_rank(query: &str, name: &str, summary: Option<&str>) -> u8 {
+    let name = normalize_lookup(name);
+    let summary = summary.map(normalize_lookup);
+
+    if name == query {
+        return 0;
+    }
+
+    if name.starts_with(query) {
+        return 1;
+    }
+
+    if name.contains(query) {
+        return 2;
+    }
+
+    if summary
+        .as_deref()
+        .map(|summary| summary.starts_with(query))
+        .unwrap_or(false)
+    {
+        return 3;
+    }
+
+    if summary
+        .as_deref()
+        .map(|summary| summary.contains(query))
+        .unwrap_or(false)
+    {
+        return 4;
+    }
+
+    5
+}
+
+fn render_appimagehub_search_error(error: &AppImageHubSearchError) -> String {
+    match error {
+        AppImageHubSearchError::Parse(inner) => inner.to_string(),
+        AppImageHubSearchError::Transport(inner) => inner.to_string(),
     }
 }

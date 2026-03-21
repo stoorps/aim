@@ -49,6 +49,10 @@ pub fn classify_input(query: &str) -> Result<ClassifiedInput, ClassifyInputError
         return classified;
     }
 
+    if let Some(classified) = classify_appimagehub_input(query) {
+        return classified;
+    }
+
     if let Some(classified) = classify_sourceforge_http(query) {
         return classified;
     }
@@ -85,6 +89,26 @@ pub fn classify_input(query: &str) -> Result<ClassifiedInput, ClassifyInputError
 #[derive(Debug, Eq, PartialEq)]
 pub enum ClassifyInputError {
     Unsupported,
+}
+
+fn classify_appimagehub_input(query: &str) -> Option<Result<ClassifiedInput, ClassifyInputError>> {
+    if let Some(id) = appimagehub_id_from_url(query) {
+        return Some(Ok(appimagehub_source_ref(
+            SourceInputKind::AppImageHubUrl,
+            id,
+        )));
+    }
+
+    let id = query.strip_prefix("appimagehub/")?;
+
+    if !is_ascii_digits(id) {
+        return Some(Err(ClassifyInputError::Unsupported));
+    }
+
+    Some(Ok(appimagehub_source_ref(
+        SourceInputKind::AppImageHubShorthand,
+        id,
+    )))
 }
 
 fn classify_gitlab_http(query: &str) -> Option<Result<ClassifiedInput, ClassifyInputError>> {
@@ -224,8 +248,37 @@ fn classify_sourceforge_http(query: &str) -> Option<Result<ClassifiedInput, Clas
     }))
 }
 
+fn appimagehub_id_from_url(query: &str) -> Option<&str> {
+    let trimmed = query
+        .trim_start_matches("https://www.appimagehub.com/p/")
+        .trim_start_matches("http://www.appimagehub.com/p/");
+    if trimmed == query {
+        return None;
+    }
+
+    let id = trim_query_and_fragment(trimmed).trim_matches('/');
+    if is_ascii_digits(id) { Some(id) } else { None }
+}
+
+fn appimagehub_source_ref(kind: SourceInputKind, id: &str) -> ClassifiedInput {
+    ClassifiedInput {
+        kind,
+        source_kind: SourceKind::AppImageHub,
+        normalized_kind: NormalizedSourceKind::AppImageHub,
+        locator: format!("https://www.appimagehub.com/p/{id}"),
+        canonical_locator: Some(id.to_owned()),
+        requested_tag: None,
+        requested_asset_name: None,
+        tracks_latest: true,
+    }
+}
+
 fn trim_query_and_fragment(value: &str) -> &str {
     value.split(['?', '#']).next().unwrap_or(value)
+}
+
+fn is_ascii_digits(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn is_supported_gitlab_repo_path(parts: &[&str]) -> bool {
