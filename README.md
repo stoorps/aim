@@ -1,24 +1,25 @@
-# aim
-AppImage Manager
+# upm
+Universal Package Manager
 
-`aim` is a Rust Cargo workspace for managing AppImages from multiple source types.
+`upm` is a Rust Cargo workspace for a modular package manager with a shared headless core and provider crates.
 
 ## Workspace
 
-- `crates/aim-core`: business logic, source adapters, registry, install/update planning
-- `crates/aim-cli`: thin terminal frontend for parsing, prompting, and rendering
+- `crates/upm-core`: headless application layer for query normalization, resolution, planning, registry persistence, install/update orchestration, and provider-facing APIs
+- `crates/upm`: thin terminal frontend for argument parsing, config loading, prompting, progress reporting, and summary rendering
+- `crates/upm-appimage`: AppImageHub transport, search, and add-provider integration composed into the CLI through `ProviderRegistry`
 
-The split is intentional so a future GUI client can reuse `aim-core` without moving logic out of the shared library.
+The split is intentional so future frontends can reuse `upm-core`, while package-source behavior stays modular instead of being hardcoded into the core.
 
 ## Commands
 
 ```text
-aim <QUERY>
-aim
-aim update
-aim list
-aim search <QUERY>
-aim remove <QUERY>
+upm <QUERY>
+upm
+upm update
+upm list
+upm search <QUERY>
+upm remove <QUERY>
 ```
 
 ## Query Forms
@@ -36,22 +37,22 @@ aim remove <QUERY>
 
 ## Search
 
-`aim search <QUERY>` is part of v0.9 finalisation.
+`upm search <QUERY>` is part of the initial modular provider surface.
 
 - search is provider-extensible and currently includes GitHub plus AppImageHub
 - search results should resolve to install-ready queries such as `owner/repo` and `appimagehub/<id>`
-- the search model is provider-extensible for future phases
+- provider composition happens in `crates/upm/src/providers.rs`, not through AppImageHub-specific wiring inside `upm-core`
 
 ## Scope Overrides
 
-By default `aim` auto-detects whether to use user or system scope. Override that with:
+By default `upm` auto-detects whether to use user or system scope. Override that with:
 
 - `--user`
 - `--system`
 
 ## Config
 
-Runtime config is loaded from `~/.config/aim/config.toml` or `$XDG_CONFIG_HOME/aim/config.toml`.
+Runtime config is loaded from `~/.config/upm/config.toml` or `$XDG_CONFIG_HOME/upm/config.toml`.
 
 Example:
 
@@ -63,13 +64,20 @@ allow_http = true
 - `allow_http` only permits user-supplied `http://` inputs such as direct URL installs or updates from previously installed direct HTTP origins
 - provider-resolved downloads such as AppImageHub artifacts remain HTTPS-only even when `allow_http = true`
 
+## Breaking Rename
+
+- `upm` is a hard rename from `aim`
+- runtime overrides now use `UPM_*` names such as `UPM_CONFIG_PATH` and `UPM_REGISTRY_PATH`
+- old `AIM_*` runtime overrides are intentionally ignored
+- default config and registry locations now live under `upm` paths
+
 ## Current Flow Shape
 
-- `aim <QUERY>` installs direct provider matches when available, otherwise falls back to search results, shows live progress on stderr, prints an `Installation Summary` on stdout for installs, and renders an `Installation Review` when tracking needs confirmation
-- bare `aim` prints an `Update Review` without mutating the registry
-- `aim update` executes the pending updates, streams live status on stderr, then prints an `Update Summary`
-- `aim list` renders either `Installed Apps` or `No installed apps yet`
-- `aim remove <QUERY>` resolves a registered application name, streams removal progress on stderr, then prints a `Removal Summary`
+- `upm <QUERY>` installs direct provider matches when available, otherwise falls back to search results, shows live progress on stderr, prints an `Installation Summary` on stdout for installs, and renders an `Installation Review` when tracking needs confirmation
+- bare `upm` prints an `Update Review` without mutating the registry
+- `upm update` executes the pending updates, streams live status on stderr, then prints an `Update Summary`
+- `upm list` renders either `Installed Apps` or `No installed apps yet`
+- `upm remove <QUERY>` resolves a registered application name, streams removal progress on stderr, then prints a `Removal Summary`
 
 ## Terminal UX
 

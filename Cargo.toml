@@ -1,10 +1,11 @@
 [workspace]
 members = [
-    "crates/aim-core",
-    "crates/aim-cli",
+    "crates/upm-core",
+    "crates/upm-appimage",
+    "crates/upm",
 ]
 default-members = [
-    "crates/aim-cli",
+    "crates/upm",
 ]
 resolver = "2"
 
