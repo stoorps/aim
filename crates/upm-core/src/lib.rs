@@ -9,3 +9,4 @@ pub mod source;
 pub mod update;
 
 pub use app::providers::{ExternalAddProvider, ExternalAddResolution, ProviderRegistry};
+pub use app::{UpmApp, UpmAppBuilder};

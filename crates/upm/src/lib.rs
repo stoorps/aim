@@ -7,19 +7,12 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
-use upm_core::app::add::{
-    AddPlan, AddSecurityPolicy, InstalledApp,
-    build_add_plan_with_reporter_and_registered_providers, install_app_with_reporter,
-    resolve_requested_scope,
-};
-use upm_core::app::list::{ListRow, build_list_rows};
+use upm_core::app::add::{AddPlan, AddSecurityPolicy, InstalledApp, resolve_requested_scope};
+use upm_core::app::list::ListRow;
 use upm_core::app::progress::{
     NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
 };
 use upm_core::app::remove::{RemovalResult, remove_registered_app_with_reporter};
-use upm_core::app::search::build_search_results_with_registered_providers;
-use upm_core::app::show::{build_installed_show_results, build_show_result};
-use upm_core::app::update::{build_update_plan, execute_updates_with_reporter_and_policy};
 use upm_core::domain::app::AppRecord;
 use upm_core::domain::search::{SearchQuery, SearchResults};
 use upm_core::domain::show::{InstalledShow, ShowResult};
@@ -54,14 +47,15 @@ pub fn dispatch_with_reporter_and_config(
     let store = RegistryStore::new(registry_path);
     let registry = store.load()?;
     let apps = registry.apps.clone();
+    let app = providers::application();
 
     if cli.is_review_update_flow() {
-        return Ok(DispatchResult::UpdatePlan(build_update_plan(&apps)?));
+        return Ok(DispatchResult::UpdatePlan(app.build_update_plan(&apps)?));
     }
 
     if let Some(command) = cli.command {
         return match command {
-            cli::args::Command::List => Ok(DispatchResult::List(build_list_rows(&apps))),
+            cli::args::Command::List => Ok(DispatchResult::List(app.list(&apps))),
             cli::args::Command::Remove { query } => {
                 let removal =
                     remove_registered_app_with_reporter(&query, &apps, &install_home, reporter)?;
@@ -82,13 +76,7 @@ pub fn dispatch_with_reporter_and_config(
                     kind: OperationKind::Search,
                     label: query.clone(),
                 });
-                let results = providers::with_provider_registry(|providers| {
-                    build_search_results_with_registered_providers(
-                        &SearchQuery::new(&query),
-                        &apps,
-                        providers,
-                    )
-                })?;
+                let results = app.search(&SearchQuery::new(&query), &apps)?;
                 reporter.report(&OperationEvent::Finished {
                     summary: format!("search complete: {} remote hits", results.remote_hits.len()),
                 });
@@ -96,13 +84,13 @@ pub fn dispatch_with_reporter_and_config(
             }
             cli::args::Command::Show { value } => match value {
                 Some(value) => {
-                    let result = build_show_result(&value, &apps)?;
+                    let result = app.show(&value, &apps)?;
                     Ok(DispatchResult::Show(Box::new(result)))
                 }
-                None => Ok(DispatchResult::ShowAll(build_installed_show_results(&apps))),
+                None => Ok(DispatchResult::ShowAll(app.show_all(&apps))),
             },
             cli::args::Command::Update => {
-                let updates = execute_updates_with_reporter_and_policy(
+                let updates = app.execute_updates(
                     &apps,
                     &install_home,
                     reporter,
@@ -131,18 +119,13 @@ pub fn dispatch_with_reporter_and_config(
 
     if let Some(query) = cli.query {
         let requested_scope = resolve_requested_scope(cli.system, cli.user, is_effective_root());
-        let transport = upm_core::source::github::default_transport();
-        let plan_result = providers::with_provider_registry(|providers| {
-            build_add_plan_with_reporter_and_registered_providers(
-                &query,
-                transport.as_ref(),
-                reporter,
-                providers,
-                AddSecurityPolicy {
-                    allow_http_user_sources: config.allow_http,
-                },
-            )
-        });
+        let plan_result = app.build_add_plan_with_reporter(
+            &query,
+            reporter,
+            AddSecurityPolicy {
+                allow_http_user_sources: config.allow_http,
+            },
+        );
         let mut plan = match plan_result {
             Ok(plan) => plan,
             Err(
@@ -155,13 +138,7 @@ pub fn dispatch_with_reporter_and_config(
                     kind: OperationKind::Search,
                     label: query.clone(),
                 });
-                let results = providers::with_provider_registry(|providers| {
-                    build_search_results_with_registered_providers(
-                        &SearchQuery::new(&query),
-                        &apps,
-                        providers,
-                    )
-                })?;
+                let results = app.search(&SearchQuery::new(&query), &apps)?;
                 reporter.report(&OperationEvent::Finished {
                     summary: format!("search complete: {} remote hits", results.remote_hits.len()),
                 });
@@ -178,8 +155,7 @@ pub fn dispatch_with_reporter_and_config(
             }
         }
 
-        let installed =
-            install_app_with_reporter(&query, &plan, &install_home, requested_scope, reporter)?;
+        let installed = app.install_app(&query, &plan, &install_home, requested_scope, reporter)?;
         reporter.report(&OperationEvent::StageChanged {
             stage: OperationStage::SaveRegistry,
             message: "saving registry".to_owned(),

@@ -1,13 +1,14 @@
 use crate::source::appimagehub::{
     AppImageHubError, AppImageHubTransport, resolve_appimagehub_item, resolve_appimagehub_item_with,
 };
-use upm_core::adapters::traits::{
+use upm_module_api::adapters::traits::{
     AdapterCapabilities, AdapterError, AdapterResolution, AdapterResolveOutcome, SourceAdapter,
 };
-use upm_core::app::providers::{ExternalAddProvider, ExternalAddResolution};
-use upm_core::app::query::resolve_query;
-use upm_core::domain::source::{ResolvedRelease, SourceKind, SourceRef};
-use upm_core::domain::update::{
+use upm_module_api::app::providers::{ExternalAddProvider, ExternalAddResolution};
+use upm_module_api::domain::source::{
+    NormalizedSourceKind, ResolvedRelease, SourceInputKind, SourceKind, SourceRef,
+};
+use upm_module_api::domain::update::{
     ArtifactCandidate, ChannelPreference, UpdateChannelKind, UpdateStrategy,
 };
 
@@ -58,7 +59,7 @@ impl SourceAdapter for AppImageHubAdapter {
     }
 
     fn normalize(&self, query: &str) -> Result<SourceRef, AdapterError> {
-        let source = resolve_query(query).map_err(|_| AdapterError::UnsupportedQuery)?;
+        let source = resolve_appimagehub_query(query)?;
         if source.kind != SourceKind::AppImageHub {
             return Err(AdapterError::UnsupportedQuery);
         }
@@ -92,17 +93,17 @@ impl SourceAdapter for AppImageHubAdapter {
     }
 }
 
-pub struct AppImageHubAddProvider<'a, T: AppImageHubTransport + ?Sized> {
-    transport: &'a T,
+pub struct AppImageHubAddProvider {
+    transport: Box<dyn AppImageHubTransport>,
 }
 
-impl<'a, T: AppImageHubTransport + ?Sized> AppImageHubAddProvider<'a, T> {
-    pub fn new(transport: &'a T) -> Self {
+impl AppImageHubAddProvider {
+    pub fn new(transport: Box<dyn AppImageHubTransport>) -> Self {
         Self { transport }
     }
 }
 
-impl<T: AppImageHubTransport + ?Sized> ExternalAddProvider for AppImageHubAddProvider<'_, T> {
+impl ExternalAddProvider for AppImageHubAddProvider {
     fn id(&self) -> &'static str {
         "appimagehub"
     }
@@ -113,11 +114,11 @@ impl<T: AppImageHubTransport + ?Sized> ExternalAddProvider for AppImageHubAddPro
         }
 
         let adapter = AppImageHubAdapter;
-        let resolution = match adapter.resolve_source_with(source, self.transport)? {
+        let resolution = match adapter.resolve_source_with(source, self.transport.as_ref())? {
             AdapterResolveOutcome::Resolved(resolution) => resolution,
             AdapterResolveOutcome::NoInstallableArtifact { .. } => return Ok(None),
         };
-        let Some(resolved_item) = resolve_appimagehub_item_with(source, self.transport)
+        let Some(resolved_item) = resolve_appimagehub_item_with(source, self.transport.as_ref())
             .map_err(|error| AdapterError::ResolutionFailed(format!("{error:?}")))?
         else {
             return Ok(None);
@@ -160,4 +161,36 @@ fn render_appimagehub_error(error: &AppImageHubError) -> String {
             format!("unsupported appimagehub source: {locator}")
         }
     }
+}
+
+fn resolve_appimagehub_query(query: &str) -> Result<SourceRef, AdapterError> {
+    let trimmed = query.trim();
+    let id = if let Some(id) = trimmed.strip_prefix("appimagehub/") {
+        id
+    } else if let Some(id) = trimmed.strip_prefix("https://www.appimagehub.com/p/") {
+        id
+    } else if let Some(id) = trimmed.strip_prefix("http://www.appimagehub.com/p/") {
+        id
+    } else {
+        return Err(AdapterError::UnsupportedQuery);
+    };
+
+    if !id.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(AdapterError::UnsupportedQuery);
+    }
+
+    Ok(SourceRef {
+        kind: SourceKind::AppImageHub,
+        locator: format!("https://www.appimagehub.com/p/{id}"),
+        input_kind: if trimmed.starts_with("appimagehub/") {
+            SourceInputKind::AppImageHubShorthand
+        } else {
+            SourceInputKind::AppImageHubUrl
+        },
+        normalized_kind: NormalizedSourceKind::AppImageHub,
+        canonical_locator: Some(id.to_owned()),
+        requested_tag: None,
+        requested_asset_name: None,
+        tracks_latest: true,
+    })
 }

@@ -11,4 +11,7 @@ path = "src/lib.rs"
 quick-xml.workspace = true
 reqwest.workspace = true
 serde.workspace = true
+upm-module-api = { path = "../upm-module-api" }
+
+[dev-dependencies]
 upm-core = { path = "../upm-core" }

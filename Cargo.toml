@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/upm-module-api",
     "crates/upm-core",
     "crates/upm-appimage",
     "crates/upm",

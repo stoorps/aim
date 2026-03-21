@@ -1,4 +1,7 @@
 use crate::domain::app::AppRecord;
+pub use upm_module_api::domain::update::{
+    ArtifactCandidate, ChannelPreference, UpdateChannelKind, UpdateStrategy,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum ParsedMetadataKind {
@@ -31,25 +34,6 @@ pub struct ParsedMetadata {
     pub confidence: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum UpdateChannelKind {
-    GitHubReleases,
-    ElectronBuilder,
-    Zsync,
-    DirectAsset,
-}
-
-impl UpdateChannelKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::GitHubReleases => "github-releases",
-            Self::ElectronBuilder => "electron-builder",
-            Self::Zsync => "zsync",
-            Self::DirectAsset => "direct-asset-lineage",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct UpdateChannel {
     pub kind: UpdateChannelKind,
@@ -64,30 +48,6 @@ pub struct UpdateChannel {
     pub matches_install_origin: bool,
     #[serde(default)]
     pub prerelease: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct ChannelPreference {
-    pub kind: UpdateChannelKind,
-    pub locator: String,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct UpdateStrategy {
-    pub preferred: ChannelPreference,
-    #[serde(default)]
-    pub alternates: Vec<ChannelPreference>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ArtifactCandidate {
-    pub url: String,
-    pub version: String,
-    pub arch: Option<String>,
-    pub trusted_checksum: Option<String>,
-    pub weak_checksum_md5: Option<String>,
-    pub selection_reason: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

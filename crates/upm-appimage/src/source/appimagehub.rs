@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 
-use upm_core::domain::source::SourceRef;
+use upm_module_api::domain::source::SourceRef;
 
 const DEFAULT_APPIMAGEHUB_API_BASE: &str = "https://api.appimagehub.com/ocs/v1/content";
 const GLOBAL_FIXTURE_MODE_ENV: &str = "UPM_FIXTURE_MODE";

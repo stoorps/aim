@@ -1,15 +1,16 @@
 # upm
 Universal Package Manager
 
-`upm` is a Rust Cargo workspace for a modular package manager with a shared headless core and provider crates.
+`upm` is a Rust Cargo workspace for a modular package manager with a shared headless application core, thin frontend crates, and package-manager modules.
 
 ## Workspace
 
-- `crates/upm-core`: headless application layer for query normalization, resolution, planning, registry persistence, install/update orchestration, and provider-facing APIs
+- `crates/upm-core`: headless application layer for query normalization, orchestration, module registration and composition, registry persistence, install/update planning, and the unified frontend-facing API
 - `crates/upm`: thin terminal frontend for argument parsing, config loading, prompting, progress reporting, and summary rendering
-- `crates/upm-appimage`: AppImageHub transport, search, and add-provider integration composed into the CLI through `ProviderRegistry`
+- `crates/upm-appimage`: AppImage package-manager module responsible for AppImage-specific acquisition and resolution behavior
+- `crates/upm-ui` (planned): GUI frontend over `upm-core`
 
-The split is intentional so future frontends can reuse `upm-core`, while package-source behavior stays modular instead of being hardcoded into the core.
+The split is intentional so future frontends can reuse `upm-core`, while package-manager behavior stays modular instead of being hardcoded into the core or the CLI.
 
 ## Commands
 
@@ -37,11 +38,11 @@ upm remove <QUERY>
 
 ## Search
 
-`upm search <QUERY>` is part of the initial modular provider surface.
+`upm search <QUERY>` is part of the initial modular module surface.
 
-- search is provider-extensible and currently includes GitHub plus AppImageHub
+- search is module-extensible and currently includes the built-in core search path plus AppImage-backed search sources
 - search results should resolve to install-ready queries such as `owner/repo` and `appimagehub/<id>`
-- provider composition happens in `crates/upm/src/providers.rs`, not through AppImageHub-specific wiring inside `upm-core`
+- module composition belongs in `upm-core`, not in the CLI frontend
 
 ## Scope Overrides
 

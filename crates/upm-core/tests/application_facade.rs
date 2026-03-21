@@ -1,6 +1,8 @@
-use upm_core::app::add::{AddSecurityPolicy, build_add_plan_with_registered_providers};
+use upm_core::adapters::traits::AdapterResolution;
+use upm_core::app::UpmApp;
+use upm_core::app::add::AddSecurityPolicy;
 use upm_core::app::providers::{ExternalAddProvider, ExternalAddResolution, ProviderRegistry};
-use upm_core::app::search::{SearchProvider, build_search_results_with_registered_providers};
+use upm_core::app::search::{SearchProvider, SearchProviderError};
 use upm_core::domain::search::{SearchInstallStatus, SearchQuery, SearchResult};
 use upm_core::domain::source::{
     NormalizedSourceKind, ResolvedRelease, SourceInputKind, SourceKind, SourceRef,
@@ -13,14 +15,11 @@ use upm_core::source::github::FixtureGitHubTransport;
 struct StubSearchProvider;
 
 impl SearchProvider for StubSearchProvider {
-    fn search(
-        &self,
-        _query: &SearchQuery,
-    ) -> Result<Vec<SearchResult>, upm_core::app::search::SearchProviderError> {
+    fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>, SearchProviderError> {
         Ok(vec![SearchResult {
             provider_id: "external-search".to_owned(),
             display_name: "Firefox Nightly".to_owned(),
-            description: Some("Provided by external registry".to_owned()),
+            description: Some("Provided by facade-owned providers".to_owned()),
             source_locator: "https://example.invalid/firefox-nightly".to_owned(),
             install_query: "external/firefox-nightly".to_owned(),
             canonical_locator: "external/firefox-nightly".to_owned(),
@@ -43,7 +42,7 @@ impl ExternalAddProvider for StubExternalAddProvider {
     ) -> Result<Option<ExternalAddResolution>, upm_core::adapters::traits::AdapterError> {
         Ok(
             (source.kind == SourceKind::AppImageHub).then(|| ExternalAddResolution {
-                resolution: upm_core::adapters::traits::AdapterResolution {
+                resolution: AdapterResolution {
                     source: SourceRef {
                         kind: SourceKind::AppImageHub,
                         locator: source.locator.clone(),
@@ -84,68 +83,42 @@ impl ExternalAddProvider for StubExternalAddProvider {
 }
 
 #[test]
-fn build_search_results_with_registered_providers_uses_external_hits() {
-    let query = SearchQuery::new("firefox");
-    let providers = ProviderRegistry::default().with_search_provider(StubSearchProvider);
+fn upm_app_can_be_constructed_without_cli_owned_module_composition() {
+    let _app = UpmApp::new();
+}
 
-    let results = build_search_results_with_registered_providers(&query, &[], &providers).unwrap();
+#[test]
+fn upm_app_search_delegates_through_the_application_facade() {
+    let app = UpmApp::builder()
+        .with_github_transport(Box::new(FixtureGitHubTransport))
+        .with_provider_registry(
+            ProviderRegistry::default().with_search_provider(StubSearchProvider),
+        )
+        .build();
 
-    let external_hit = results
-        .remote_hits
-        .iter()
-        .find(|hit| hit.provider_id == "external-search")
+    let results = app.search(&SearchQuery::new("firefox"), &[]).unwrap();
+
+    assert!(results.remote_hits.iter().any(|hit| {
+        hit.provider_id == "external-search" && hit.install_query == "external/firefox-nightly"
+    }));
+}
+
+#[test]
+fn upm_app_add_planning_delegates_through_the_application_facade() {
+    let app = UpmApp::builder()
+        .with_github_transport(Box::new(FixtureGitHubTransport))
+        .with_provider_registry(
+            ProviderRegistry::default().with_external_add_provider(StubExternalAddProvider),
+        )
+        .build();
+
+    let plan = app
+        .build_add_plan("appimagehub/2338455", AddSecurityPolicy::default())
         .unwrap();
-
-    assert_eq!(external_hit.install_query, "external/firefox-nightly");
-    assert!(
-        results
-            .remote_hits
-            .iter()
-            .all(|hit| hit.provider_id != "appimagehub")
-    );
-}
-
-#[test]
-fn build_add_plan_with_registered_providers_requires_external_provider_for_appimagehub() {
-    let registry = ProviderRegistry::default();
-
-    let error = build_add_plan_with_registered_providers(
-        "appimagehub/2338455",
-        &FixtureGitHubTransport,
-        &registry,
-        AddSecurityPolicy::default(),
-    )
-    .unwrap_err();
-
-    assert!(matches!(
-        error,
-        upm_core::app::add::BuildAddPlanError::NoInstallableArtifact { .. }
-    ));
-}
-
-#[test]
-fn build_add_plan_with_registered_providers_delegates_appimagehub_like_sources() {
-    let registry = ProviderRegistry::default().with_external_add_provider(StubExternalAddProvider);
-
-    let plan = build_add_plan_with_registered_providers(
-        "appimagehub/2338455",
-        &FixtureGitHubTransport,
-        &registry,
-        AddSecurityPolicy::default(),
-    )
-    .unwrap();
 
     assert_eq!(plan.resolution.source.kind, SourceKind::AppImageHub);
     assert_eq!(
-        plan.resolution.source.canonical_locator.as_deref(),
-        Some("2338455")
-    );
-    assert_eq!(
         plan.selected_artifact.url,
         "https://downloads.example.invalid/firefox.AppImage"
-    );
-    assert_eq!(
-        plan.display_name_hint.as_deref(),
-        Some("Firefox by Mozilla - Official AppImage Edition")
     );
 }

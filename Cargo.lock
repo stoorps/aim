@@ -1959,6 +1959,7 @@ dependencies = [
  "reqwest",
  "serde",
  "upm-core",
+ "upm-module-api",
 ]
 
 [[package]]
@@ -1975,6 +1976,15 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml",
+ "upm-appimage",
+ "upm-module-api",
+]
+
+[[package]]
+name = "upm-module-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

@@ -2,9 +2,9 @@
 
 ## Direction
 
-The project is evolving from a focused AppImage manager into `upm`, a modular universal package manager. The target system manages multiple package sources through a shared headless core, keeps the CLI thin, and leaves room for future GUI frontends.
+The project is evolving from a focused AppImage manager into `upm`, a modular universal package manager. The target system manages multiple package-manager modules through a shared headless application core, keeps frontend crates thin, and leaves room for future GUI frontends.
 
-The initial rename-and-extraction slice has now landed as a hard cutover: the runtime surface is `upm`, the shared core is `upm-core`, and AppImage support is composed through `upm-appimage` instead of being embedded directly into the core.
+The initial rename-and-extraction slice has now landed as a hard cutover: the runtime surface is `upm`, the shared core is `upm-core`, and AppImage support is beginning its transition into `upm-appimage` instead of remaining embedded directly into the core.
 
 The near-term goal is a Linux-first platform with honest cross-platform architecture. Phase 2 will implement Linux package sources while establishing the abstractions needed for later macOS support and possible Windows support.
 
@@ -14,7 +14,8 @@ The near-term goal is a Linux-first platform with honest cross-platform architec
 - `aim-core` stops being the all-in-one backend and is split.
 - AppImage support becomes an installable module named `upm-appimage`.
 - Shared orchestration, config, state, resolution, ranking, and frontend-facing APIs move into `upm-core`.
-- The `upm` crate becomes a thin CLI client over `upm-core`.
+- The `upm` crate becomes a thin CLI frontend over `upm-core`.
+- A future `upm-ui` crate will become a GUI frontend over the same `upm-core` application boundary.
 - The rename is a hard cutover. Legacy `AIM_*` runtime interfaces are removed rather than preserved.
 - The declarative package file starts in a hybrid mode and is intended to become the source of truth over time.
 - Every `upm` invocation should detect drift between declared state and observed system state, then auto-sync metadata as needed.
@@ -29,9 +30,10 @@ The near-term goal is a Linux-first platform with honest cross-platform architec
 The intended workspace shape after the initial refactor is:
 
 - `upm`: thin CLI frontend, ratatui config UI, command routing, presentation.
-- `upm-core`: headless application layer, provider registry, resolution pipeline, state model, declarative sync engine, ranking, policies, and frontend-agnostic APIs.
-- `upm-appimage`: AppImage provider module extracted from the current `aim-core` implementation.
-- future provider modules: `upm-pacman`, `upm-aur`, `upm-flatpak`, `upm-cargo`, `upm-npm`, and later macOS or Windows-specific modules.
+- `upm-ui`: future GUI frontend over the same application core.
+- `upm-core`: headless application layer, public application facade, internal orchestration services, module registry, state model, declarative sync engine, ranking, policies, and frontend-agnostic APIs.
+- `upm-appimage`: AppImage package-manager module extracted from the current `aim-core` implementation.
+- future module crates: `upm-pacman`, `upm-aur`, `upm-flatpak`, `upm-cargo`, `upm-npm`, and later macOS or Windows-specific modules.
 
 ### Module Model
 
@@ -42,7 +44,9 @@ UPM should stay modular in both code and packaging:
 - distro packaging can offer grouped installs such as `upm-full`
 - lighter installs can ship only the core and selected modules
 
-This means provider capabilities, discovery, search, install, remove, inspect, and sync behavior need stable interfaces in `upm-core` rather than provider-specific branching in the CLI.
+This means module capabilities, discovery, search, install, remove, inspect, and sync behavior need stable interfaces in `upm-core` rather than package-manager-specific branching in the CLI or GUI.
+
+The public API shape should be one application facade in `upm-core`, backed by smaller internal services. Frontends should call the facade; they should not compose lower-level services or talk directly to modules.
 
 ### State Model
 
@@ -65,7 +69,7 @@ Goals:
 - create `upm-core` by extracting reusable infrastructure from `aim-core`
 - reduce the CLI crate to a frontend over headless APIs
 - isolate current AppImage-specific logic into `upm-appimage`
-- compose provider behavior in the CLI through `ProviderRegistry` rather than hardcoded AppImage paths in `upm-core`
+- remove direct AppImage composition from the CLI and move module composition into `upm-core`
 - preserve current AppImage functionality and tests during the move
 
 Exit criteria:
@@ -76,18 +80,20 @@ Exit criteria:
 
 ### Milestone 1: AppImage On The New Core
 
-Make the current AppImage implementation the first real module on the modular architecture.
+Make the current AppImage implementation the first real package-manager module on the modular architecture.
 
 Goals:
 
-- validate the provider module contract using AppImage as the reference implementation
-- move search, add, install, update, show, and remove behaviors behind core provider APIs
-- prove the CLI can treat AppImage as just one enabled source
+- establish `upm-core` as the sole application boundary for CLI and future GUI frontends
+- validate the module contract using AppImage as the reference implementation
+- move AppImage-specific acquisition backends behind `upm-appimage`
+- prove the CLI can treat AppImage as just one enabled module
 
 Exit criteria:
 
 - AppImage support is no longer special-cased as the whole product
-- provider registration and capability discovery exist in `upm-core`
+- CLI command paths run through the `upm-core` application facade
+- AppImage acquisition minutia no longer lives as top-level application concepts in `upm-core`
 
 ### Milestone 2: Linux Native Sources
 
@@ -175,8 +181,8 @@ Exit criteria:
 
 The following are explicitly not required to complete Phase 2:
 
-- full macOS provider implementation
-- Windows provider implementation
+- full macOS module implementation
+- Windows module implementation
 - GUI frontend delivery
 - forcing strict config-authoritative reconciliation before provider behavior is stable
 - shipping every conceivable Linux package manager in the first expansion
@@ -199,7 +205,7 @@ That means:
 Implementation plans should follow this order:
 
 1. rename and crate extraction
-2. provider API definition and AppImage migration onto `upm-core`
+2. application facade definition and AppImage migration behind a real module boundary
 3. Linux provider onboarding in a stable order, likely `pacman` then `Flatpak`, then `AUR`, then `cargo`, then `npm`
 4. ratatui configuration and ranking UX
 5. declarative state model, drift detection, and `update` sync behavior

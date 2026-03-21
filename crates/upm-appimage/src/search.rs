@@ -1,25 +1,29 @@
 use crate::source::appimagehub::{
     AppImageHubSearchError, AppImageHubTransport, search_appimagehub_with,
 };
-use upm_core::app::search::{SearchProvider, SearchProviderError};
-use upm_core::domain::search::{SearchInstallStatus, SearchQuery, SearchResult};
+use upm_module_api::app::search::{SearchProvider, SearchProviderError};
+use upm_module_api::domain::search::{SearchInstallStatus, SearchQuery, SearchResult};
 
-pub struct AppImageHubSearchProvider<'a, T: AppImageHubTransport + ?Sized> {
-    transport: &'a T,
+pub struct AppImageHubSearchProvider {
+    transport: Box<dyn AppImageHubTransport>,
 }
 
-impl<'a, T: AppImageHubTransport + ?Sized> AppImageHubSearchProvider<'a, T> {
-    pub fn new(transport: &'a T) -> Self {
+impl AppImageHubSearchProvider {
+    pub fn new(transport: Box<dyn AppImageHubTransport>) -> Self {
         Self { transport }
     }
 }
 
-impl<T: AppImageHubTransport + ?Sized> SearchProvider for AppImageHubSearchProvider<'_, T> {
+impl SearchProvider for AppImageHubSearchProvider {
     fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchProviderError> {
-        let hits = search_appimagehub_with(&query.text, query.remote_limit, self.transport)
-            .map_err(|error| {
-                SearchProviderError::new("appimagehub", &render_appimagehub_search_error(&error))
-            })?;
+        let hits =
+            search_appimagehub_with(&query.text, query.remote_limit, self.transport.as_ref())
+                .map_err(|error| {
+                    SearchProviderError::new(
+                        "appimagehub",
+                        &render_appimagehub_search_error(&error),
+                    )
+                })?;
 
         let normalized_query = normalize_lookup(&query.text);
         let mut ranked_hits = hits

@@ -17,6 +17,8 @@ serde.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true
 toml.workspace = true
+upm-appimage = { path = "../upm-appimage" }
+upm-module-api = { path = "../upm-module-api" }
 
 [dev-dependencies]
 tempfile.workspace = true

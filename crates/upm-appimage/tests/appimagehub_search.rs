@@ -24,7 +24,7 @@ impl SearchProvider for StubProvider {
 
 #[test]
 fn appimagehub_search_provider_maps_hits_to_install_ready_results() {
-    let provider = AppImageHubSearchProvider::new(&FixtureAppImageHubTransport);
+    let provider = AppImageHubSearchProvider::new(Box::new(FixtureAppImageHubTransport));
 
     let results = provider.search(&SearchQuery::new("firefox")).unwrap();
 
@@ -38,7 +38,7 @@ fn appimagehub_search_provider_maps_hits_to_install_ready_results() {
 
 #[test]
 fn appimagehub_hits_are_annotated_as_installed_by_canonical_id() {
-    let provider = AppImageHubSearchProvider::new(&FixtureAppImageHubTransport);
+    let provider = AppImageHubSearchProvider::new(Box::new(FixtureAppImageHubTransport));
     let installed = vec![AppRecord {
         stable_id: "firefox".to_owned(),
         display_name: "Firefox by Mozilla - Official AppImage Edition".to_owned(),
@@ -76,7 +76,7 @@ fn appimagehub_hits_are_annotated_as_installed_by_canonical_id() {
 #[test]
 fn search_can_merge_github_and_appimagehub_providers() {
     let github = GitHubSearchProvider::new(&FixtureGitHubTransport);
-    let appimagehub = AppImageHubSearchProvider::new(&FixtureAppImageHubTransport);
+    let appimagehub = AppImageHubSearchProvider::new(Box::new(FixtureAppImageHubTransport));
     let stub = StubProvider {
         hit: SearchResult {
             provider_id: "github".to_owned(),
@@ -131,7 +131,7 @@ fn appimagehub_adapter_resolves_installable_items_through_fixture_transport() {
 
 #[test]
 fn appimagehub_add_provider_resolves_external_add_plan() {
-    let provider = AppImageHubAddProvider::new(&FixtureAppImageHubTransport);
+    let provider = AppImageHubAddProvider::new(Box::new(FixtureAppImageHubTransport));
     let source = resolve_query("appimagehub/2338455").unwrap();
 
     let resolution = provider.resolve(&source).unwrap().unwrap();

@@ -9,25 +9,7 @@ use crate::source::github::{
     search_github_repositories_with,
 };
 use std::collections::HashSet;
-
-pub trait SearchProvider {
-    fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchProviderError>;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SearchProviderError {
-    pub provider_id: String,
-    pub message: String,
-}
-
-impl SearchProviderError {
-    pub fn new(provider_id: &str, message: &str) -> Self {
-        Self {
-            provider_id: provider_id.to_owned(),
-            message: message.to_owned(),
-        }
-    }
-}
+pub use upm_module_api::app::search::{SearchProvider, SearchProviderError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SearchError {
@@ -53,7 +35,12 @@ pub fn build_search_results_with_registered_providers(
     let github_transport = default_transport();
     let github_provider = GitHubSearchProvider::new(github_transport.as_ref());
     let mut resolved_providers = vec![&github_provider as &dyn SearchProvider];
-    resolved_providers.extend(providers.search_providers.iter().copied());
+    resolved_providers.extend(
+        providers
+            .search_providers
+            .iter()
+            .map(|provider| provider.as_ref() as &dyn SearchProvider),
+    );
 
     build_search_results_with(query, installed_apps, &resolved_providers)
 }
