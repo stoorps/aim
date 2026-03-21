@@ -7,6 +7,7 @@ fn help_lists_expected_commands() {
     cmd.arg("--help")
         .assert()
         .success()
+        .stdout(contains("search"))
         .stdout(contains("remove"))
         .stdout(contains("list"))
         .stdout(contains("update"));

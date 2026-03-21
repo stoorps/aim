@@ -85,6 +85,7 @@ pub struct ArtifactCandidate {
     pub url: String,
     pub version: String,
     pub arch: Option<String>,
+    pub trusted_checksum: Option<String>,
     pub selection_reason: String,
 }
 

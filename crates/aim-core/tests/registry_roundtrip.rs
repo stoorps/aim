@@ -205,3 +205,84 @@ fn registry_round_trips_source_identity_for_new_provider_kinds() {
         "https://example.com/downloads/team-app.AppImage"
     );
 }
+
+#[test]
+fn registry_save_is_atomic_and_cleans_up_temp_file() {
+    let dir = tempdir().unwrap();
+    let registry_path = dir.path().join("registry.toml");
+    let store = RegistryStore::new(registry_path.clone());
+
+    store
+        .save(&aim_core::registry::model::Registry {
+            version: 1,
+            apps: vec![aim_core::domain::app::AppRecord {
+                stable_id: "bat".to_owned(),
+                display_name: "Bat".to_owned(),
+                source_input: None,
+                source: None,
+                installed_version: None,
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            }],
+        })
+        .unwrap();
+
+    assert!(registry_path.exists());
+    assert!(!dir.path().join("registry.toml.tmp").exists());
+}
+
+#[test]
+fn registry_exclusive_lock_rejects_second_mutator() {
+    let dir = tempdir().unwrap();
+    let store = RegistryStore::new(dir.path().join("registry.toml"));
+    let _guard = store.lock_exclusive().unwrap();
+
+    let error = store.lock_exclusive().unwrap_err();
+
+    assert!(matches!(
+        error,
+        aim_core::registry::store::RegistryStoreError::LockUnavailable
+    ));
+}
+
+#[test]
+fn registry_mutate_exclusive_reloads_and_writes_latest_state() {
+    let dir = tempdir().unwrap();
+    let store = RegistryStore::new(dir.path().join("registry.toml"));
+    store
+        .save(&aim_core::registry::model::Registry {
+            version: 1,
+            apps: vec![aim_core::domain::app::AppRecord {
+                stable_id: "bat".to_owned(),
+                display_name: "Bat".to_owned(),
+                source_input: None,
+                source: None,
+                installed_version: None,
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            }],
+        })
+        .unwrap();
+
+    store
+        .mutate_exclusive(|registry| {
+            registry.apps.push(aim_core::domain::app::AppRecord {
+                stable_id: "t3code".to_owned(),
+                display_name: "T3 Code".to_owned(),
+                source_input: None,
+                source: None,
+                installed_version: None,
+                update_strategy: None,
+                metadata: Vec::new(),
+                install: None,
+            });
+        })
+        .unwrap();
+
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.apps.len(), 2);
+    assert_eq!(loaded.apps[0].stable_id, "bat");
+    assert_eq!(loaded.apps[1].stable_id, "t3code");
+}

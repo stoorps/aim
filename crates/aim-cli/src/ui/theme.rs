@@ -1,9 +1,11 @@
 use std::sync::OnceLock;
 
-use console::{Style, true_colors_enabled};
+use console::{Style as ConsoleStyle, true_colors_enabled};
 use dialoguer::theme::ColorfulTheme;
+use ratatui::style::{Color, Modifier, Style as TuiStyle};
 
-use crate::cli::config::ThemeConfig;
+use crate::cli::config::ThemeConfig as AppThemeConfig;
+use crate::config::ThemeConfig as SearchThemeConfig;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ColorValue {
@@ -54,7 +56,7 @@ impl Default for Theme {
     }
 }
 
-pub fn resolve_theme(config: &ThemeConfig) -> Theme {
+pub fn resolve_theme(config: &AppThemeConfig) -> Theme {
     let mut theme = Theme::default();
     override_spec(&mut theme.heading, config.heading.as_deref());
     override_spec(&mut theme.accent, config.accent.as_deref());
@@ -153,7 +155,7 @@ pub fn parse_style_spec(input: &str) -> Result<StyleSpec, String> {
 }
 
 pub fn apply_style_spec(message: &str, spec: &StyleSpec) -> String {
-    let mut style = Style::new();
+    let mut style = ConsoleStyle::new();
     if spec.bold {
         style = style.bold();
     }
@@ -214,7 +216,7 @@ fn is_named_color(token: &str) -> bool {
     )
 }
 
-fn apply_color(style: Style, color: &ColorValue) -> Style {
+fn apply_color(style: ConsoleStyle, color: &ColorValue) -> ConsoleStyle {
     match color {
         ColorValue::Named(name) => apply_named_color(style, name),
         ColorValue::Rgb(red, green, blue) => {
@@ -227,7 +229,7 @@ fn apply_color(style: Style, color: &ColorValue) -> Style {
     }
 }
 
-fn apply_named_color(style: Style, name: &str) -> Style {
+fn apply_named_color(style: ConsoleStyle, name: &str) -> ConsoleStyle {
     match name {
         "black" => style.black(),
         "red" => style.red(),
@@ -304,9 +306,9 @@ mod tests {
 
     #[test]
     fn invalid_override_falls_back_to_default_theme() {
-        let theme = resolve_theme(&ThemeConfig {
+        let theme = resolve_theme(&AppThemeConfig {
             heading: Some("bogus".to_owned()),
-            ..ThemeConfig::default()
+            ..AppThemeConfig::default()
         });
 
         assert_eq!(theme.heading, Theme::default().heading);
@@ -326,4 +328,88 @@ mod tests {
             parse_style_spec("#75658a").unwrap()
         );
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SearchBrowserPalette {
+    accent: Color,
+    accent_secondary: Color,
+    dim: Color,
+}
+
+pub fn search_browser_palette(config: &SearchThemeConfig) -> SearchBrowserPalette {
+    SearchBrowserPalette {
+        accent: parse_color(&config.accent).unwrap_or(Color::Rgb(179, 136, 255)),
+        accent_secondary: parse_color(&config.accent_secondary)
+            .unwrap_or(Color::Rgb(213, 194, 255)),
+        dim: parse_color(&config.dim).unwrap_or(Color::Rgb(127, 115, 150)),
+    }
+}
+
+impl SearchBrowserPalette {
+    pub fn heading_style(self) -> TuiStyle {
+        TuiStyle::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn hint_style(self) -> TuiStyle {
+        TuiStyle::default().fg(self.dim)
+    }
+
+    pub fn muted_style(self) -> TuiStyle {
+        TuiStyle::default().fg(self.dim)
+    }
+
+    pub fn text_style(self) -> TuiStyle {
+        TuiStyle::default().fg(Color::White)
+    }
+
+    pub fn dim_style(self) -> TuiStyle {
+        TuiStyle::default().fg(self.dim)
+    }
+
+    pub fn checkbox_selected_style(self) -> TuiStyle {
+        TuiStyle::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn checkbox_idle_style(self) -> TuiStyle {
+        TuiStyle::default().fg(self.dim)
+    }
+
+    pub fn version_style(self) -> TuiStyle {
+        TuiStyle::default().fg(self.accent_secondary)
+    }
+
+    pub fn tag_style(self) -> TuiStyle {
+        TuiStyle::default().add_modifier(Modifier::BOLD)
+    }
+
+    pub fn cursor_style(self) -> TuiStyle {
+        TuiStyle::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn active_name_style(self) -> TuiStyle {
+        self.text_style().add_modifier(Modifier::BOLD)
+    }
+
+    pub fn disabled_style(self) -> TuiStyle {
+        self.dim_style()
+    }
+}
+
+fn parse_color(value: &str) -> Option<Color> {
+    let hex = value.trim().strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(red, green, blue))
 }

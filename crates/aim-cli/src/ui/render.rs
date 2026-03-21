@@ -1,7 +1,9 @@
 use aim_core::app::add::AddPlan;
+use aim_core::domain::search::SearchResults;
 use aim_core::domain::update::UpdateExecutionStatus;
 
 use crate::DispatchResult;
+use crate::config::CliConfig;
 
 pub fn render_update_summary(total: usize, selected: usize, failed: usize) -> String {
     [
@@ -14,11 +16,16 @@ pub fn render_update_summary(total: usize, selected: usize, failed: usize) -> St
 }
 
 pub fn render_dispatch_result(result: &DispatchResult) -> String {
+    render_dispatch_result_with_config(result, &CliConfig::default())
+}
+
+pub fn render_dispatch_result_with_config(result: &DispatchResult, config: &CliConfig) -> String {
     match result {
         DispatchResult::Added(added) => render_added_app(added),
         DispatchResult::List(rows) => render_list(rows),
         DispatchResult::PendingAdd(plan) => render_pending_add(plan),
         DispatchResult::Removed(removed) => render_removed_app(removed),
+        DispatchResult::Search(results) => render_search_results_with_config(results, config),
         DispatchResult::UpdatePlan(plan) => render_update_plan(plan),
         DispatchResult::Updated(result) => render_updated_apps(result),
         DispatchResult::Noop => String::new(),
@@ -205,6 +212,67 @@ fn install_file_paths(added: &aim_core::app::add::InstalledApp) -> Vec<String> {
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn render_search_results(results: &SearchResults) -> String {
+    let mut lines = vec![crate::ui::theme::heading("Search Results")];
+
+    lines.push(crate::ui::theme::heading("Remote Results"));
+    if results.remote_hits.is_empty() {
+        lines.push(crate::ui::theme::muted("No remote matches"));
+    } else {
+        for hit in &results.remote_hits {
+            lines.push(crate::ui::theme::bullet(&format!(
+                "[{}] {}",
+                hit.provider_id, hit.display_name
+            )));
+            lines.push(format!("Install query: {}", hit.install_query));
+            lines.push(format!("Source: {}", hit.source_locator));
+            if let Some(description) = &hit.description {
+                lines.push(format!("Description: {description}"));
+            }
+        }
+    }
+
+    lines.push(crate::ui::theme::heading("Installed Matches"));
+    if results.installed_matches.is_empty() {
+        lines.push(crate::ui::theme::muted("No installed matches"));
+    } else {
+        for app in &results.installed_matches {
+            lines.push(crate::ui::theme::bullet(&format!(
+                "{} ({})",
+                app.display_name, app.stable_id
+            )));
+        }
+    }
+
+    if !results.warnings.is_empty() {
+        lines.push(crate::ui::theme::heading("Warnings"));
+        for warning in &results.warnings {
+            match warning.provider_id.as_deref() {
+                Some(provider_id) => {
+                    lines.push(format!("Warning: {provider_id}: {}", warning.message))
+                }
+                None => lines.push(format!("Warning: {}", warning.message)),
+            }
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_search_results_with_config(results: &SearchResults, config: &CliConfig) -> String {
+    if crate::ui::search_browser::can_launch(results) {
+        match crate::ui::search_browser::run(results, config) {
+            Ok(Some(selection)) => {
+                return crate::ui::search_browser::render_confirmation_summary(&selection.rows);
+            }
+            Ok(None) => return String::new(),
+            Err(_) => {}
+        }
+    }
+
+    render_search_results(results)
 }
 
 fn render_updated_apps(result: &aim_core::domain::update::UpdateExecutionResult) -> String {

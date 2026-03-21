@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperationKind {
     Add,
+    Search,
     UpdateBatch,
     UpdateItem,
     Remove,

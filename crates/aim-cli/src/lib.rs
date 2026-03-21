@@ -1,6 +1,8 @@
 pub mod cli;
+pub mod config;
 pub mod ui;
 
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -9,12 +11,15 @@ use aim_core::app::add::{
     resolve_requested_scope,
 };
 use aim_core::app::list::{ListRow, build_list_rows};
-use aim_core::app::progress::{NoopReporter, OperationEvent, OperationStage, ProgressReporter};
+use aim_core::app::progress::{
+    NoopReporter, OperationEvent, OperationKind, OperationStage, ProgressReporter,
+};
 use aim_core::app::remove::{RemovalResult, remove_registered_app_with_reporter};
+use aim_core::app::search::build_search_results;
 use aim_core::app::update::{build_update_plan, execute_updates_with_reporter};
 use aim_core::domain::app::AppRecord;
+use aim_core::domain::search::{SearchQuery, SearchResults};
 use aim_core::domain::update::{UpdateExecutionResult, UpdatePlan};
-use aim_core::registry::model::Registry;
 use aim_core::registry::store::RegistryStore;
 
 pub use cli::args::Cli;
@@ -48,30 +53,37 @@ pub fn dispatch_with_reporter(
             cli::args::Command::Remove { query } => {
                 let removal =
                     remove_registered_app_with_reporter(&query, &apps, &install_home, reporter)?;
-                let remaining_apps = removal.remaining_apps.clone();
                 reporter.report(&OperationEvent::StageChanged {
                     stage: OperationStage::SaveRegistry,
                     message: "saving registry".to_owned(),
                 });
-                store.save(&Registry {
-                    version: registry.version,
-                    apps: remaining_apps,
+                store.mutate_exclusive(|latest| {
+                    remove_app_record(&mut latest.apps, &removal.removed.stable_id);
                 })?;
                 reporter.report(&OperationEvent::Finished {
                     summary: format!("removed {}", removal.removed.stable_id),
                 });
                 Ok(DispatchResult::Removed(Box::new(removal)))
             }
+            cli::args::Command::Search { query } => {
+                reporter.report(&OperationEvent::Started {
+                    kind: OperationKind::Search,
+                    label: query.clone(),
+                });
+                let results = build_search_results(&SearchQuery::new(&query), &apps)?;
+                reporter.report(&OperationEvent::Finished {
+                    summary: format!("search complete: {} remote hits", results.remote_hits.len()),
+                });
+                Ok(DispatchResult::Search(results))
+            }
             cli::args::Command::Update => {
                 let updates = execute_updates_with_reporter(&apps, &install_home, reporter)?;
-                let updated_apps = updates.apps.clone();
                 reporter.report(&OperationEvent::StageChanged {
                     stage: OperationStage::SaveRegistry,
                     message: "saving registry".to_owned(),
                 });
-                store.save(&Registry {
-                    version: registry.version,
-                    apps: updated_apps,
+                store.mutate_exclusive(|latest| {
+                    merge_updated_app_records(&mut latest.apps, &apps, &updates.apps);
                 })?;
                 reporter.report(&OperationEvent::Finished {
                     summary: format!(
@@ -100,15 +112,12 @@ pub fn dispatch_with_reporter(
 
         let installed =
             install_app_with_reporter(&query, &plan, &install_home, requested_scope, reporter)?;
-        let mut updated_apps = registry.apps.clone();
-        upsert_app_record(&mut updated_apps, installed.record.clone());
         reporter.report(&OperationEvent::StageChanged {
             stage: OperationStage::SaveRegistry,
             message: "saving registry".to_owned(),
         });
-        store.save(&Registry {
-            version: registry.version,
-            apps: updated_apps,
+        store.mutate_exclusive(|latest| {
+            upsert_app_record(&mut latest.apps, installed.record.clone());
         })?;
         reporter.report(&OperationEvent::Finished {
             summary: format!("installed {}", installed.record.stable_id),
@@ -121,7 +130,11 @@ pub fn dispatch_with_reporter(
 }
 
 pub fn render(result: &DispatchResult) -> String {
-    ui::render::render_dispatch_result(result)
+    render_with_config(result, &config::CliConfig::default())
+}
+
+pub fn render_with_config(result: &DispatchResult, config: &config::CliConfig) -> String {
+    ui::render::render_dispatch_result_with_config(result, config)
 }
 
 fn registry_path() -> PathBuf {
@@ -139,6 +152,7 @@ pub enum DispatchResult {
     List(Vec<ListRow>),
     PendingAdd(Box<AddPlan>),
     Removed(Box<RemovalResult>),
+    Search(SearchResults),
     UpdatePlan(UpdatePlan),
     Updated(Box<UpdateExecutionResult>),
     Noop,
@@ -151,6 +165,7 @@ pub enum DispatchError {
     Prompt(ui::prompt::PromptError),
     RemovePlan(aim_core::app::remove::RemoveRegisteredAppError),
     Registry(aim_core::registry::store::RegistryStoreError),
+    Search(aim_core::app::search::SearchError),
     UpdatePlan(aim_core::app::update::BuildUpdatePlanError),
     UpdateExecution(aim_core::app::update::ExecuteUpdatesError),
 }
@@ -190,6 +205,7 @@ impl std::fmt::Display for DispatchError {
             Self::Prompt(error) => write!(f, "prompt failed: {error:?}"),
             Self::RemovePlan(error) => write!(f, "remove failed: {error:?}"),
             Self::Registry(error) => write!(f, "registry failed: {error:?}"),
+            Self::Search(error) => write!(f, "search failed: {error:?}"),
             Self::UpdatePlan(error) => write!(f, "update planning failed: {error:?}"),
             Self::UpdateExecution(error) => write!(f, "update execution failed: {error:?}"),
         }
@@ -238,6 +254,12 @@ impl From<aim_core::registry::store::RegistryStoreError> for DispatchError {
     }
 }
 
+impl From<aim_core::app::search::SearchError> for DispatchError {
+    fn from(value: aim_core::app::search::SearchError) -> Self {
+        Self::Search(value)
+    }
+}
+
 fn upsert_app_record(apps: &mut Vec<AppRecord>, record: AppRecord) {
     if let Some(existing) = apps
         .iter_mut()
@@ -248,6 +270,33 @@ fn upsert_app_record(apps: &mut Vec<AppRecord>, record: AppRecord) {
     }
 
     apps.push(record);
+}
+
+fn remove_app_record(apps: &mut Vec<AppRecord>, stable_id: &str) {
+    apps.retain(|app| app.stable_id != stable_id);
+}
+
+fn merge_updated_app_records(
+    latest_apps: &mut [AppRecord],
+    original_apps: &[AppRecord],
+    updated_apps: &[AppRecord],
+) {
+    let original_ids = original_apps
+        .iter()
+        .map(|app| app.stable_id.as_str())
+        .collect::<HashSet<_>>();
+    let updated_by_id = updated_apps
+        .iter()
+        .map(|app| (app.stable_id.as_str(), app.clone()))
+        .collect::<HashMap<_, _>>();
+
+    for app in latest_apps.iter_mut() {
+        if original_ids.contains(app.stable_id.as_str())
+            && let Some(updated) = updated_by_id.get(app.stable_id.as_str())
+        {
+            *app = updated.clone();
+        }
+    }
 }
 
 fn install_home(registry_path: &Path) -> PathBuf {
