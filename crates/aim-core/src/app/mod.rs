@@ -6,4 +6,5 @@ pub mod progress;
 pub mod query;
 pub mod remove;
 pub mod scope;
+pub mod search;
 pub mod update;

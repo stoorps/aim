@@ -14,14 +14,19 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
+base64 = "0.22.1"
 clap = { version = "4.5.32", features = ["derive"] }
 assert_cmd = "2.0.16"
 dialoguer = "0.12.0"
 console = "0.16.3"
+crossterm = "0.28.1"
+fs2 = "0.4.3"
 indicatif = "0.17.11"
 libc = "0.2.171"
+ratatui = "0.29.0"
 reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
+sha2 = "0.10.8"
 tempfile = "3.19.1"
 toml = "0.8.20"

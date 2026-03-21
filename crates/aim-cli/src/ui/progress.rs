@@ -23,6 +23,7 @@ pub fn byte_style() -> ProgressStyle {
 pub fn operation_label(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::Add => "Installing",
+        OperationKind::Search => "Searching",
         OperationKind::UpdateBatch => "Updating",
         OperationKind::UpdateItem => "Updating",
         OperationKind::Remove => "Removing",

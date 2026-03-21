@@ -1,5 +1,8 @@
 use aim_core::app::query::resolve_query;
-use aim_core::source::github::{FixtureGitHubTransport, discover_github_candidates_with};
+use aim_core::source::github::{
+    FixtureGitHubTransport, discover_github_candidates_with, http_client_policy,
+};
+use std::time::Duration;
 
 #[test]
 fn discovery_reports_appimage_assets_and_latest_linux_yml() {
@@ -30,4 +33,12 @@ fn discovery_marks_explicit_older_release_against_latest_fixture_release() {
 
     assert_eq!(discovery.releases[0].tag, "v0.0.12");
     assert!(discovery.requested_is_older_release);
+}
+
+#[test]
+fn github_http_policy_uses_explicit_timeout_and_retry_defaults() {
+    let policy = http_client_policy();
+
+    assert_eq!(policy.timeout, Duration::from_secs(30));
+    assert_eq!(policy.max_retries, 3);
 }

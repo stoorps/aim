@@ -8,21 +8,27 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
 
+fn write_staged_payload(root: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let staged_path = root.join("staging").join(format!("{name}.download"));
+    fs::create_dir_all(staged_path.parent().unwrap()).unwrap();
+    fs::write(&staged_path, bytes).unwrap();
+    staged_path
+}
+
 #[test]
 fn install_writes_desktop_entry_and_reports_refresh_warning_only() {
     let root = tempdir().unwrap();
-    let staging_root = root.path().join("staging");
     let payload_root = root.path().join("payloads");
     let desktop_root = root.path().join("applications");
 
-    fs::create_dir(&staging_root).unwrap();
     fs::create_dir(&payload_root).unwrap();
     fs::create_dir(&desktop_root).unwrap();
+    let staged_path = write_staged_payload(root.path(), "bat", b"\x7fELFAppImage");
 
     let outcome = execute_install(&InstallRequest {
-        staging_root: &staging_root,
+        staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
-        artifact_bytes: b"\x7fELFAppImage",
+        trusted_checksum: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",
@@ -40,16 +46,19 @@ fn install_writes_desktop_entry_and_reports_refresh_warning_only() {
 #[test]
 fn install_executes_refresh_helpers_when_available() {
     let root = tempdir().unwrap();
-    let staging_root = root.path().join("staging");
     let payload_root = root.path().join("payloads");
     let desktop_root = root.path().join("applications");
     let helper_root = root.path().join("helpers");
     let log_path = root.path().join("helpers.log");
 
-    fs::create_dir(&staging_root).unwrap();
     fs::create_dir(&payload_root).unwrap();
     fs::create_dir(&desktop_root).unwrap();
     fs::create_dir(&helper_root).unwrap();
+    let staged_path = write_staged_payload(
+        root.path(),
+        "bat",
+        b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82",
+    );
 
     let update_helper = helper_root.join("update-desktop-database");
     let icon_helper = helper_root.join("gtk-update-icon-cache");
@@ -70,9 +79,9 @@ fn install_executes_refresh_helpers_when_available() {
     fs::create_dir_all(&icon_root).unwrap();
 
     let outcome = execute_install(&InstallRequest {
-        staging_root: &staging_root,
+        staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
-        artifact_bytes: b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82",
+        trusted_checksum: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",
@@ -97,20 +106,23 @@ fn install_executes_refresh_helpers_when_available() {
 #[test]
 fn install_extracts_icon_from_appimage_payload_when_icon_path_is_requested() {
     let root = tempdir().unwrap();
-    let staging_root = root.path().join("staging");
     let payload_root = root.path().join("payloads");
     let desktop_root = root.path().join("applications");
     let icon_root = root.path().join("icons/hicolor/256x256/apps");
 
-    fs::create_dir(&staging_root).unwrap();
     fs::create_dir(&payload_root).unwrap();
     fs::create_dir(&desktop_root).unwrap();
     fs::create_dir_all(&icon_root).unwrap();
+    let staged_path = write_staged_payload(
+        root.path(),
+        "bat",
+        b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82",
+    );
 
     let outcome = execute_install(&InstallRequest {
-        staging_root: &staging_root,
+        staged_payload_path: &staged_path,
         final_payload_path: &payload_root.join("bat.AppImage"),
-        artifact_bytes: b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82",
+        trusted_checksum: None,
         desktop: Some(DesktopIntegrationRequest {
             desktop_entry_path: &desktop_root.join("aim-bat.desktop"),
             desktop_entry_contents: "[Desktop Entry]\nName=bat\nExec=bat.AppImage\nType=Application\n",

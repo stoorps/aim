@@ -15,8 +15,12 @@ path = "src/main.rs"
 clap.workspace = true
 dialoguer.workspace = true
 console.workspace = true
+crossterm.workspace = true
 indicatif.workspace = true
 libc.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+toml.workspace = true
 aim-core = { path = "../aim-core" }
 
 [dev-dependencies]

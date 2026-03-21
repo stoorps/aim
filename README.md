@@ -17,6 +17,7 @@ aim <QUERY>
 aim
 aim update
 aim list
+aim search <QUERY>
 aim remove <QUERY>
 ```
 
@@ -28,7 +29,17 @@ aim remove <QUERY>
 - direct GitHub release asset URLs
 - `https://...` direct URLs
 - GitLab URLs
+- SourceForge URLs
 - `file://...` local file imports
+
+## Search
+
+`aim search <QUERY>` is part of v0.9 finalisation.
+
+- v0.9 search is GitHub-backed first
+- search results should resolve to install-ready GitHub shorthand such as `owner/repo`
+- the search model is provider-extensible for future phases
+- `custom-json` is deferred and is not part of the v0.9 search or install contract
 
 ## Scope Overrides
 

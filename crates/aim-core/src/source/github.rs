@@ -1,13 +1,35 @@
 use std::env;
+use std::time::Duration;
 
 use crate::domain::source::{ResolvedRelease, SourceRef};
 use crate::metadata::MetadataDocument;
 
 const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 const FIXTURE_MODE_ENV: &str = "AIM_GITHUB_FIXTURE_MODE";
+const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_HTTP_MAX_RETRIES: usize = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HttpClientPolicy {
+    pub timeout: Duration,
+    pub max_retries: usize,
+}
+
+pub fn http_client_policy() -> HttpClientPolicy {
+    HttpClientPolicy {
+        timeout: Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS),
+        max_retries: DEFAULT_HTTP_MAX_RETRIES,
+    }
+}
 
 pub trait GitHubTransport {
     fn fetch_releases(&self, repo: &str) -> Result<Vec<TransportRelease>, GitHubDiscoveryError>;
+
+    fn search_repositories(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TransportRepository>, GitHubSearchError>;
 
     fn fetch_document(
         &self,
@@ -28,6 +50,13 @@ pub struct TransportRelease {
     pub tag: String,
     pub prerelease: bool,
     pub assets: Vec<TransportAsset>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransportRepository {
+    pub full_name: String,
+    pub description: Option<String>,
+    pub html_url: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +159,22 @@ pub fn discover_github_candidates_with<T: GitHubTransport + ?Sized>(
     })
 }
 
+pub fn search_github_repositories(
+    query: &str,
+    limit: usize,
+) -> Result<Vec<TransportRepository>, GitHubSearchError> {
+    let transport = default_transport();
+    search_github_repositories_with(query, limit, transport.as_ref())
+}
+
+pub fn search_github_repositories_with<T: GitHubTransport + ?Sized>(
+    query: &str,
+    limit: usize,
+    transport: &T,
+) -> Result<Vec<TransportRepository>, GitHubSearchError> {
+    transport.search_repositories(query, limit)
+}
+
 pub fn default_transport() -> Box<dyn GitHubTransport> {
     if env::var(FIXTURE_MODE_ENV).ok().as_deref() == Some("1") {
         Box::new(FixtureGitHubTransport)
@@ -151,6 +196,7 @@ impl Default for ReqwestGitHubTransport {
 
 impl ReqwestGitHubTransport {
     pub fn new() -> Self {
+        let policy = http_client_policy();
         let mut default_headers = reqwest::header::HeaderMap::new();
         default_headers.insert(
             reqwest::header::USER_AGENT,
@@ -171,6 +217,7 @@ impl ReqwestGitHubTransport {
         Self {
             client: reqwest::blocking::Client::builder()
                 .default_headers(default_headers)
+                .timeout(policy.timeout)
                 .build()
                 .expect("reqwest client should build"),
             api_base: env::var("AIM_GITHUB_API_BASE")
@@ -206,6 +253,34 @@ impl GitHubTransport for ReqwestGitHubTransport {
                         content_type: asset.content_type,
                     })
                     .collect(),
+            })
+            .collect())
+    }
+
+    fn search_repositories(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TransportRepository>, GitHubSearchError> {
+        let url = format!("{}/search/repositories", self.api_base);
+        let response = self
+            .client
+            .get(url)
+            .query(&[("q", query), ("per_page", &limit.to_string())])
+            .send()
+            .map_err(GitHubSearchError::Transport)?
+            .error_for_status()
+            .map_err(GitHubSearchError::Transport)?
+            .json::<ApiRepositorySearchResponse>()
+            .map_err(GitHubSearchError::Transport)?;
+
+        Ok(response
+            .items
+            .into_iter()
+            .map(|repository| TransportRepository {
+                full_name: repository.full_name,
+                description: repository.description,
+                html_url: repository.html_url,
             })
             .collect())
     }
@@ -246,6 +321,14 @@ impl GitHubTransport for FixtureGitHubTransport {
         Ok(fixture_releases(repo))
     }
 
+    fn search_repositories(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TransportRepository>, GitHubSearchError> {
+        Ok(fixture_repository_search(query, limit))
+    }
+
     fn fetch_document(
         &self,
         url: &str,
@@ -269,6 +352,11 @@ pub enum GitHubDiscoveryError {
     Transport(reqwest::Error),
 }
 
+#[derive(Debug)]
+pub enum GitHubSearchError {
+    Transport(reqwest::Error),
+}
+
 #[derive(serde::Deserialize)]
 struct ApiRelease {
     tag_name: String,
@@ -281,6 +369,18 @@ struct ApiAsset {
     name: String,
     browser_download_url: String,
     content_type: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ApiRepositorySearchResponse {
+    items: Vec<ApiRepository>,
+}
+
+#[derive(serde::Deserialize)]
+struct ApiRepository {
+    full_name: String,
+    description: Option<String>,
+    html_url: String,
 }
 
 fn is_appimage_asset(name: &str) -> bool {
@@ -308,6 +408,16 @@ fn fixture_releases(repo: &str) -> Vec<TransportRelease> {
             fixture_release(repo, "v0.0.11", "T3-Code-0.0.11-x86_64.AppImage"),
         ],
         "sharkdp/bat" => vec![fixture_release(repo, "v1.0.0", "Bat-1.0.0-x86_64.AppImage")],
+        "fero1xd/uploadstuff-server" => vec![fixture_release_without_appimage(
+            repo,
+            "v1.0.0",
+            "uploadstuff-server-linux-x86_64.tar.gz",
+        )],
+        "Socialure/lawn" => vec![fixture_release_without_appimage(
+            repo,
+            "v1.0.0",
+            "lawn-linux-x86_64.tar.gz",
+        )],
         _ => {
             let repo_name = repo.split('/').next_back().unwrap_or("app");
             let title = title_case(repo_name);
@@ -339,6 +449,25 @@ fn fixture_release(repo: &str, tag: &str, asset_name: &str) -> TransportRelease 
     }
 }
 
+fn fixture_release_without_appimage(repo: &str, tag: &str, asset_name: &str) -> TransportRelease {
+    TransportRelease {
+        tag: tag.to_owned(),
+        prerelease: false,
+        assets: vec![
+            TransportAsset {
+                name: asset_name.to_owned(),
+                url: format!("https://github.com/{repo}/releases/download/{tag}/{asset_name}"),
+                content_type: Some("application/gzip".to_owned()),
+            },
+            TransportAsset {
+                name: "latest-linux.yml".to_owned(),
+                url: format!("https://github.com/{repo}/releases/download/{tag}/latest-linux.yml"),
+                content_type: Some("application/yaml".to_owned()),
+            },
+        ],
+    }
+}
+
 fn fixture_document(url: &str) -> Option<Vec<u8>> {
     let tag = url.split("/releases/download/").nth(1)?.split('/').next()?;
     let name = url.split('/').next_back()?;
@@ -352,11 +481,83 @@ fn fixture_document(url: &str) -> Option<Vec<u8>> {
             };
             let version = tag.trim_start_matches('v');
             Some(
-                format!("version: {version}\npath: {appimage}\nsha512: fixture-sha\n").into_bytes(),
+                format!("version: {version}\npath: {appimage}\nsha512: ZZma4ZD+9XB4GGTHCNZu8I92OY02YrEvIG89ZtRNi99W8SZKwWkmGZz/QyNBxqAt0XeiKtcR80/dMnKlwpcIWw==\n").into_bytes(),
             )
         }
         _ => None,
     }
+}
+
+fn fixture_repository_search(query: &str, limit: usize) -> Vec<TransportRepository> {
+    let (normalized_query, name_only) = parse_fixture_repository_query(query);
+
+    fixture_repository_catalog()
+        .into_iter()
+        .filter(|repository| {
+            let full_name_matches = repository
+                .full_name
+                .to_ascii_lowercase()
+                .contains(&normalized_query);
+            if name_only {
+                return full_name_matches;
+            }
+
+            full_name_matches
+                || repository
+                    .description
+                    .as_deref()
+                    .map(|description| description.to_ascii_lowercase().contains(&normalized_query))
+                    .unwrap_or(false)
+        })
+        .take(limit)
+        .collect()
+}
+
+fn parse_fixture_repository_query(query: &str) -> (String, bool) {
+    let trimmed = query.trim();
+    if let Some(value) = trimmed.strip_suffix(" in:name") {
+        return (value.trim().to_ascii_lowercase(), true);
+    }
+
+    (trimmed.to_ascii_lowercase(), false)
+}
+
+fn fixture_repository_catalog() -> Vec<TransportRepository> {
+    vec![
+        TransportRepository {
+            full_name: "sharkdp/bat".to_owned(),
+            description: Some("A cat(1) clone with wings.".to_owned()),
+            html_url: "https://github.com/sharkdp/bat".to_owned(),
+        },
+        TransportRepository {
+            full_name: "astatine/bat".to_owned(),
+            description: Some("A small fixture repository for bat-shaped searches.".to_owned()),
+            html_url: "https://github.com/astatine/bat".to_owned(),
+        },
+        TransportRepository {
+            full_name: "eth-p/bat-extras".to_owned(),
+            description: Some("Bash scripts that integrate with bat.".to_owned()),
+            html_url: "https://github.com/eth-p/bat-extras".to_owned(),
+        },
+        TransportRepository {
+            full_name: "fero1xd/uploadstuff-server".to_owned(),
+            description: Some("Custom Server for UploadThing by pingdotgg".to_owned()),
+            html_url: "https://github.com/fero1xd/uploadstuff-server".to_owned(),
+        },
+        TransportRepository {
+            full_name: "Socialure/lawn".to_owned(),
+            description: Some(
+                "Video review for creative teams — Socialure-branded fork of pingdotgg/lawn"
+                    .to_owned(),
+            ),
+            html_url: "https://github.com/Socialure/lawn".to_owned(),
+        },
+        TransportRepository {
+            full_name: "pingdotgg/t3code".to_owned(),
+            description: Some("The T3 desktop app.".to_owned()),
+            html_url: "https://github.com/pingdotgg/t3code".to_owned(),
+        },
+    ]
 }
 
 fn title_case(value: &str) -> String {

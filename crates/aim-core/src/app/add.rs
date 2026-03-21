@@ -1,4 +1,5 @@
 use std::env;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -13,12 +14,14 @@ use crate::app::scope::{ScopeOverride, resolve_install_scope_with_default};
 use crate::domain::app::{AppRecord, InstallMetadata, InstallScope};
 use crate::domain::source::{NormalizedSourceKind, ResolvedRelease, SourceKind};
 use crate::domain::update::{ArtifactCandidate, ParsedMetadata, UpdateChannelKind, UpdateStrategy};
-use crate::integration::install::{InstallOutcome, InstallRequest, execute_install};
+use crate::integration::install::{
+    InstallOutcome, InstallRequest, execute_install, staged_appimage_path,
+};
 use crate::integration::policy::{IntegrationMode, resolve_install_policy};
 use crate::metadata::parse_document;
 use crate::platform::probe_live_host;
 use crate::source::github::{
-    GitHubDiscoveryError, GitHubTransport, discover_github_candidates_with,
+    GitHubDiscoveryError, GitHubTransport, discover_github_candidates_with, http_client_policy,
 };
 use crate::update::channels::build_channels;
 use crate::update::ranking::{rank_channels, select_artifact, to_preference};
@@ -100,6 +103,7 @@ pub fn build_add_plan_with<T: GitHubTransport + ?Sized>(
                 url: source.locator.clone(),
                 version: "unresolved".to_owned(),
                 arch: None,
+                trusted_checksum: None,
                 selection_reason: "heuristic-match".to_owned(),
             };
             let strategy = UpdateStrategy {
@@ -238,8 +242,13 @@ pub fn install_app_with_reporter(
         stage: OperationStage::DownloadArtifact,
         message: "downloading artifact".to_owned(),
     });
-    let artifact_bytes =
-        download_artifact_bytes_with_reporter(&plan.selected_artifact.url, reporter)?;
+    let staging_root = install_home.join(".local/share/aim/staging");
+    let staged_payload_path = staged_appimage_path(&staging_root, &record.stable_id);
+    download_artifact_to_staged_path_with_reporter(
+        &plan.selected_artifact.url,
+        &staged_payload_path,
+        reporter,
+    )?;
     let payload_exec = payload_path.clone();
     let desktop_owned = match policy.integration_mode {
         IntegrationMode::PayloadOnly | IntegrationMode::Denied => None,
@@ -265,9 +274,9 @@ pub fn install_app_with_reporter(
         message: "staging payload".to_owned(),
     });
     let install_outcome = execute_install(&InstallRequest {
-        staging_root: &install_home.join(".local/share/aim/staging"),
+        staged_payload_path: &staged_payload_path,
         final_payload_path: &payload_path,
-        artifact_bytes: &artifact_bytes,
+        trusted_checksum: plan.selected_artifact.trusted_checksum.as_deref(),
         desktop: desktop_owned.as_ref().map(|(path, contents)| {
             crate::integration::install::DesktopIntegrationRequest {
                 desktop_entry_path: path.as_path(),
@@ -355,43 +364,117 @@ pub enum InstallAppError {
     Install(crate::integration::install::PayloadInstallError),
 }
 
-fn download_artifact_bytes_with_reporter(
+fn download_artifact_to_staged_path_with_reporter(
     url: &str,
+    staged_payload_path: &Path,
     reporter: &mut impl ProgressReporter,
-) -> Result<Vec<u8>, InstallAppError> {
+) -> Result<u64, InstallAppError> {
+    let policy = http_client_policy();
+
     if env::var(FIXTURE_MODE_ENV).ok().as_deref() == Some("1") {
-        let bytes = b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82".to_vec();
-        reporter.report(&OperationEvent::Progress {
-            current: bytes.len() as u64,
-            total: Some(bytes.len() as u64),
+        let bytes = b"\x7fELFAppImage\x89PNG\r\n\x1a\nicondataIEND\xaeB`\x82";
+        return download_to_staged_path_with_retries(staged_payload_path, reporter, policy, || {
+            Ok((
+                Box::new(std::io::Cursor::new(bytes.to_vec())) as Box<dyn Read>,
+                Some(bytes.len() as u64),
+            ))
         });
-        return Ok(bytes);
     }
 
-    let response = reqwest::blocking::get(url).map_err(InstallAppError::Download)?;
-    let response = response
-        .error_for_status()
+    let client = reqwest::blocking::Client::builder()
+        .timeout(policy.timeout)
+        .build()
         .map_err(InstallAppError::Download)?;
-    let total = response.content_length();
-    let mut response = response;
-    let mut bytes = Vec::new();
+
+    download_to_staged_path_with_retries(staged_payload_path, reporter, policy, || {
+        let response = client.get(url).send().map_err(InstallAppError::Download)?;
+        let response = response
+            .error_for_status()
+            .map_err(InstallAppError::Download)?;
+        let total = response.content_length();
+        Ok((Box::new(response) as Box<dyn Read>, total))
+    })
+}
+
+pub fn download_to_staged_path_with_retries(
+    staged_payload_path: &Path,
+    reporter: &mut impl ProgressReporter,
+    policy: crate::source::github::HttpClientPolicy,
+    mut open_stream: impl FnMut() -> Result<(Box<dyn Read>, Option<u64>), InstallAppError>,
+) -> Result<u64, InstallAppError> {
+    let mut last_error = None;
+    let attempts = policy.max_retries.max(1);
+
+    for attempt in 0..attempts {
+        match open_stream() {
+            Ok((mut reader, total)) => {
+                match stream_payload_to_staged_file_with_reporter(
+                    &mut reader,
+                    total,
+                    staged_payload_path,
+                    reporter,
+                ) {
+                    Ok(written) => return Ok(written),
+                    Err(error) if attempt + 1 < attempts && is_retryable_download_error(&error) => {
+                        last_error = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) if attempt + 1 < attempts && is_retryable_download_error(&error) => {
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        InstallAppError::DownloadIo(std::io::Error::other("download failed after retries"))
+    }))
+}
+
+pub fn stream_payload_to_staged_file_with_reporter<R: Read>(
+    reader: &mut R,
+    total: Option<u64>,
+    staged_payload_path: &Path,
+    reporter: &mut impl ProgressReporter,
+) -> Result<u64, InstallAppError> {
+    if let Some(parent) = staged_payload_path.parent() {
+        fs::create_dir_all(parent).map_err(InstallAppError::DownloadIo)?;
+    }
+
+    let mut file = File::create(staged_payload_path).map_err(InstallAppError::DownloadIo)?;
     let mut buffer = [0_u8; 16 * 1024];
     let mut current = 0_u64;
 
     loop {
-        let read = response
-            .read(&mut buffer)
-            .map_err(InstallAppError::DownloadIo)?;
+        let read = match reader.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) => {
+                let _ = fs::remove_file(staged_payload_path);
+                return Err(InstallAppError::DownloadIo(error));
+            }
+        };
         if read == 0 {
             break;
         }
 
-        bytes.extend_from_slice(&buffer[..read]);
+        if let Err(error) = std::io::Write::write_all(&mut file, &buffer[..read]) {
+            let _ = fs::remove_file(staged_payload_path);
+            return Err(InstallAppError::DownloadIo(error));
+        }
         current += read as u64;
         reporter.report(&OperationEvent::Progress { current, total });
     }
 
-    Ok(bytes)
+    Ok(current)
+}
+
+fn is_retryable_download_error(error: &InstallAppError) -> bool {
+    matches!(
+        error,
+        InstallAppError::Download(_) | InstallAppError::DownloadIo(_)
+    )
 }
 
 fn render_desktop_entry(display_name: &str, exec_path: &Path) -> String {

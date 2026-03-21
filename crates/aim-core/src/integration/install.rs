@@ -1,8 +1,12 @@
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{error::Error, fmt};
+
+use base64::Engine;
+use sha2::{Digest, Sha512};
 
 use crate::integration::desktop::{extract_icon_from_payload, write_desktop_integration};
 use crate::integration::refresh::refresh_integration;
@@ -24,6 +28,8 @@ pub fn replacement_path(target: &Path) -> PathBuf {
 #[derive(Debug)]
 pub enum PayloadInstallError {
     InvalidArtifact,
+    ChecksumMismatch,
+    InvalidTrustedChecksum,
     Io(io::Error),
     DesktopIntegration(io::Error),
 }
@@ -38,6 +44,8 @@ impl fmt::Display for PayloadInstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidArtifact => write!(f, "artifact is not a valid AppImage"),
+            Self::ChecksumMismatch => write!(f, "artifact checksum did not match trusted metadata"),
+            Self::InvalidTrustedChecksum => write!(f, "trusted checksum metadata is malformed"),
             Self::Io(error) => write!(f, "payload installation failed: {error}"),
             Self::DesktopIntegration(error) => {
                 write!(f, "desktop integration failed: {error}")
@@ -63,9 +71,9 @@ pub struct DesktopIntegrationRequest<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstallRequest<'a> {
-    pub staging_root: &'a Path,
+    pub staged_payload_path: &'a Path,
     pub final_payload_path: &'a Path,
-    pub artifact_bytes: &'a [u8],
+    pub trusted_checksum: Option<&'a str>,
     pub desktop: Option<DesktopIntegrationRequest<'a>>,
     pub helpers: DesktopHelpers,
 }
@@ -79,33 +87,25 @@ pub struct InstallOutcome {
 }
 
 pub fn stage_and_commit_payload(
-    staging_root: &Path,
+    staged_payload_path: &Path,
     final_payload_path: &Path,
-    artifact_bytes: &[u8],
 ) -> Result<PayloadInstallOutcome, PayloadInstallError> {
-    if !is_appimage_payload(artifact_bytes) {
+    if !is_appimage_payload_path(staged_payload_path)? {
+        let _ = fs::remove_file(staged_payload_path);
         return Err(PayloadInstallError::InvalidArtifact);
     }
 
-    let app_id = final_payload_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("download");
-    let staged_path = staged_appimage_path(staging_root, app_id);
     let replacement = replacement_path(final_payload_path);
 
-    fs::create_dir_all(staging_root)?;
-    fs::write(&staged_path, artifact_bytes)?;
-
-    let mut permissions = fs::metadata(&staged_path)?.permissions();
+    let mut permissions = fs::metadata(staged_payload_path)?.permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(&staged_path, permissions)?;
+    fs::set_permissions(staged_payload_path, permissions)?;
 
     if let Some(parent) = final_payload_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    fs::rename(&staged_path, &replacement)?;
+    fs::rename(staged_payload_path, &replacement)?;
     fs::rename(&replacement, final_payload_path)?;
 
     Ok(PayloadInstallOutcome {
@@ -113,24 +113,25 @@ pub fn stage_and_commit_payload(
     })
 }
 
-fn is_appimage_payload(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"\x7fELF")
+fn is_appimage_payload_path(path: &Path) -> Result<bool, io::Error> {
+    let mut file = fs::File::open(path)?;
+    let mut header = [0_u8; 4];
+    let read = file.read(&mut header)?;
+    Ok(read == header.len() && header == *b"\x7fELF")
 }
 
 pub fn execute_install(
     request: &InstallRequest<'_>,
 ) -> Result<InstallOutcome, PayloadInstallError> {
-    let payload = stage_and_commit_payload(
-        request.staging_root,
-        request.final_payload_path,
-        request.artifact_bytes,
-    )?;
+    verify_trusted_checksum(request.staged_payload_path, request.trusted_checksum)?;
+    let payload =
+        stage_and_commit_payload(request.staged_payload_path, request.final_payload_path)?;
 
     let mut desktop_entry_path = None;
     let mut icon_path = None;
     if let Some(desktop) = &request.desktop {
         let extracted_icon = if desktop.icon_bytes.is_none() && desktop.icon_path.is_some() {
-            extract_icon_from_payload(request.artifact_bytes)
+            extract_icon_from_payload_path(&payload.final_payload_path)
         } else {
             None
         };
@@ -160,4 +161,39 @@ pub fn execute_install(
         icon_path,
         warnings,
     })
+}
+
+fn extract_icon_from_payload_path(path: &Path) -> Option<Vec<u8>> {
+    fs::read(path)
+        .ok()
+        .and_then(|payload| extract_icon_from_payload(&payload))
+}
+
+fn verify_trusted_checksum(
+    staged_payload_path: &Path,
+    trusted_checksum: Option<&str>,
+) -> Result<(), PayloadInstallError> {
+    let Some(trusted_checksum) = trusted_checksum.map(str::trim) else {
+        return Ok(());
+    };
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(trusted_checksum)
+        .map_err(|_| {
+            let _ = fs::remove_file(staged_payload_path);
+            PayloadInstallError::InvalidTrustedChecksum
+        })?;
+    if decoded.len() != 64 {
+        let _ = fs::remove_file(staged_payload_path);
+        return Err(PayloadInstallError::InvalidTrustedChecksum);
+    }
+
+    let payload = fs::read(staged_payload_path)?;
+    let actual_checksum = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(payload));
+    if actual_checksum != trusted_checksum {
+        let _ = fs::remove_file(staged_payload_path);
+        return Err(PayloadInstallError::ChecksumMismatch);
+    }
+
+    Ok(())
 }
